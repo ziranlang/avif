@@ -1,0 +1,33 @@
+#import, file "../src/av1/cfl.zi";
+using Codec :: #import "image_codec/api"
+
+CflBoundaries :: () -> s32 {
+    luma: [64]u16
+    if PredictCfl4x4(luma[:0], 8, 8, 8, 0, 0, 0, 0, 128, 1, 8).error.code != InvalidInput { return 1 }
+    if PredictCfl4x4(luma[:63], 8, 8, 8, 0, 0, 0, 0, 128, 1, 8).error.code != InvalidInput { return 2 }
+    if PredictCfl4x4(luma[:], 0, 8, 8, 0, 0, 0, 0, 128, 1, 8).error.code != InvalidInput { return 3 }
+    if PredictCfl4x4(luma[:], 8, 9, 8, 0, 0, 0, 0, 128, 1, 8).error.code != InvalidInput { return 4 }
+    if PredictCfl4x4(luma[:], 8, 8, 8, -1, 0, 0, 0, 128, 1, 8).error.code != InvalidInput { return 5 }
+    if PredictCfl4x4(luma[:], 8, 8, 8, 64, 0, 0, 0, 128, 1, 8).error.code != InvalidInput { return 6 }
+    if PredictCfl4x4(luma[:], 8, 8, 8, 0, 0, 0, 1, 128, 1, 8).error.code != InvalidInput { return 7 }
+    if PredictCfl4x4(luma[:], 8, 8, 8, 0, 0, 2, 0, 128, 1, 8).error.code != InvalidInput { return 8 }
+    if PredictCfl4x4(luma[:], 8, 1, 8, 0, 0, 1, 0, 128, 1, 8).error.code != InvalidInput { return 9 }
+    if PredictCfl4x4(luma[:], 8, 8, 1, 0, 0, 1, 1, 128, 1, 8).error.code != InvalidInput { return 10 }
+    if PredictCfl4x4(luma[:], 8, 8, 8, 0, 0, 0, 0, 256, 1, 8).error.code != InvalidInput { return 11 }
+    if PredictCfl4x4(luma[:], 8, 8, 8, 0, 0, 0, 0, 128, -17, 8).error.code != InvalidInput { return 12 }
+    if PredictCfl4x4(luma[:], 8, 8, 8, 0, 0, 0, 0, 128, 17, 8).error.code != InvalidInput { return 13 }
+    if PredictCfl4x4(luma[:], 8, 8, 8, 0, 0, 0, 0, 128, 1, 16).error.code != InvalidInput { return 14 }
+    luma[0] = 256
+    invalid := PredictCfl4x4(luma[:], 8, 8, 8, 0, 0, 0, 0, 128, 1, 8)
+    if invalid.error.code != InvalidInput { return 15 }
+    for i: 0..15 { if invalid.samples[i] != 0 { return 16 } }
+    token: Cancellation; Cancel(*token)
+    cancelled := PredictCfl4x4(luma[:], 8, 8, 8, 0, 0, 0, 0, 128, 1, 8, *token)
+    if cancelled.error.code != DecodeCancelled { return 17 }
+    for i: 0..15 { if cancelled.samples[i] != 0 { return 18 } }
+    last: [4096]u16; last[4095] = 4095
+    edge := PredictCfl4x4(last[:], 64, 64, 64, 63, 63, 0, 0, 2048, -16, 12)
+    if edge.error.code != DecodeOK { return 19 }
+    for i: 0..15 { if edge.samples[i] != 2048 { return 20 } }
+    return 0
+}

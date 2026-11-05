@@ -1,0 +1,54 @@
+#import, file "../src/av1/grain_apply.zi";
+#import, file "../src/av1/grain_params.zi";
+
+GrainPictureEmpty :: (picture: GrainPicture) -> bool {
+    if picture.width != 0 || picture.height != 0 || picture.chroma_width != 0 || picture.chroma_height != 0 { return false }
+    for i: 0..4095 { if picture.y[i] != 0 || picture.u[i] != 0 || picture.v[i] != 0 { return false } }
+    return true
+}
+GrainApplyBounds :: () -> s32 {
+    source: [2]u16 = .[123,256]
+    input: GrainPictureView; input.y = source[:1]; input.y_stride = 1
+    input.width = 1; input.height = 1; input.monochrome = true
+    input.subsampling_x = 1; input.subsampling_y = 1; input.bit_depth = 8
+    p: FilmGrainParams
+    copy := ApplyFilmGrain64(input, p)
+    if copy.error.code != DecodeOK || copy.width != 1 || copy.height != 1 || copy.y[0] != 123 || copy.chroma_width != 0 || copy.chroma_height != 0 { return 1 }
+    source[0] = 7
+    if copy.y[0] != 123 { return 2 }
+    for i: 1..4095 { if copy.y[i] != 0 || copy.u[i] != 0 || copy.v[i] != 0 { return 3 } }
+    input.width = 65
+    if ApplyFilmGrain64(input, p).error.code != InvalidInput { return 4 }
+    input.width = 1; input.height = 65
+    if ApplyFilmGrain64(input, p).error.code != InvalidInput { return 5 }
+    input.height = 1; input.y_stride = 0
+    if ApplyFilmGrain64(input, p).error.code != InvalidInput { return 6 }
+    input.y_stride = 65
+    if ApplyFilmGrain64(input, p).error.code != InvalidInput { return 7 }
+    input.y_stride = 1; input.y = source[:0]
+    if ApplyFilmGrain64(input, p).error.code != InvalidInput { return 8 }
+    input.y = source[1:2]
+    bad := ApplyFilmGrain64(input, p)
+    if bad.error.code != InvalidInput || !GrainPictureEmpty(bad) { return 9 }
+    input.y = source[:1]; input.bit_depth = 9
+    if ApplyFilmGrain64(input, p).error.code != InvalidInput { return 10 }
+    input.bit_depth = 8; input.monochrome = false
+    if ApplyFilmGrain64(input, p).error.code != InvalidInput { return 11 }
+    input.u = source[:1]; input.v = source[:1]; input.chroma_stride = 0
+    if ApplyFilmGrain64(input, p).error.code != InvalidInput { return 12 }
+    input.chroma_stride = 1; input.v = source[1:2]
+    if ApplyFilmGrain64(input, p).error.code != InvalidInput { return 13 }
+    input.v = source[:1]; p.apply_grain = true; p.scaling_shift = 7
+    if ApplyFilmGrain64(input, p).error.code != InvalidInput { return 14 }
+    p.scaling_shift = 8; p.ar_coeff_shift = 6; p.cb_offset = 512
+    if ApplyFilmGrain64(input, p).error.code != InvalidInput { return 15 }
+    p.cb_offset = 0; p.num_y_points = 15
+    if ApplyFilmGrain64(input, p).error.code != InvalidInput { return 16 }
+    p.num_y_points = 2; p.scaling_points_y[0] = 128; p.scaling_points_y[2] = 128
+    bad = ApplyFilmGrain64(input, p)
+    if bad.error.code != InvalidInput || !GrainPictureEmpty(bad) { return 17 }
+    token: Cancellation; Cancel(*token)
+    cancelled := ApplyFilmGrain64(input, p, *token)
+    if cancelled.error.code != DecodeCancelled || !GrainPictureEmpty(cancelled) { return 18 }
+    return 0
+}

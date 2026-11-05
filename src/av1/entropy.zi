@@ -1,0 +1,379 @@
+#import, file "./range.zi";
+#import, file "./coefficients.zi";
+#import, file "./cdfs4.zi";
+#import, file "./transforms.zi";
+#import, file "./partition.zi";
+#import, file "./modes.zi";
+#import, file "./prediction.zi";
+#import, file "./filter_intra.zi";
+#import, file "./directional.zi";
+#import, file "./palette.zi";
+#import, file "./palette_cdfs.zi";
+#import, file "./palette_uv_cdfs.zi";
+using Codec :: #import "image_codec/api"
+
+// Default probabilities from libaom d772e334cc724105040382a977ebb10dfd393293
+// av1/common/entropymode.c. Copyright (c) 2016, 2017 Alliance for Open Media.
+// BSD 2-Clause + AOM Patent License, retained alongside these modules.
+#import, file "./tile_state.zi";
+#import, file "./chroma.zi";
+#import, file "./chroma_modes.zi";
+#import, file "./chroma_cdfs.zi";
+#import, file "./cdfs4_uv.zi";
+
+DecodeLosslessIntraBlock :: (tile: *LosslessTile, row4: s32, column4: s32, width: s32, height: s32) -> DecodeError {
+    // Normative Subsampled_Size marks portrait luma blocks invalid in4:2:2,
+    // even when a similarly shaped transform size exists for another mode.
+    if tile.has_chroma && tile.subsampling_x == 1 && tile.subsampling_y == 0 && height > width {
+        return Error(MalformedInput, tile.decoder.bits.byte)
+    }
+    if row4 >= tile.result.height / 4 || column4 >= tile.result.width / 4 { return Error(DecodeOK) }
+    context: s32
+    if row4 > 0 { context += cast(s32)tile.block_skip[(row4 - 1) * 16 + column4] }
+    if column4 > 0 { context += cast(s32)tile.block_skip[row4 * 16 + column4 - 1] }
+    skipped := ReadSymbol(*tile.decoder, tile.skip_cdf[context * 3:context * 3 + 3])
+    mode_context: [13]s32 = .[0,1,2,3,4,4,4,4,3,0,1,2,0]
+    above_context: s32; left_context: s32
+    if row4 > 0 { above_context = mode_context[tile.block_mode[(row4 - 1) * 16 + column4]] }
+    if column4 > 0 { left_context = mode_context[tile.block_mode[row4 * 16 + column4 - 1]] }
+    mode_at := (above_context * 5 + left_context) * 14
+    mode := ReadSymbol(*tile.decoder, tile.mode_cdfs.keyframe[mode_at:mode_at + 14])
+    if tile.decoder.error.code != DecodeOK { return tile.decoder.error }
+    extended_block := (width >= 8 && height >= 8) || width >= 16 || height >= 16
+    angle_delta: s32
+    if mode >= 1 && mode <= 8 && extended_block {
+        angle_at := (mode - 1) * 8
+        angle := ReadSymbol(*tile.decoder, tile.mode_cdfs.angle[angle_at:angle_at + 8])
+        if tile.decoder.error.code != DecodeOK { return tile.decoder.error }
+        angle_delta = angle - 3
+    }
+    has_chroma := tile.has_chroma
+    if height == 4 && tile.subsampling_y == 1 && row4 % 2 == 0 { has_chroma = false }
+    if width == 4 && tile.subsampling_x == 1 && column4 % 2 == 0 { has_chroma = false }
+    uv_width := width / (1 + tile.subsampling_x); uv_height := height / (1 + tile.subsampling_y)
+    if uv_width < 4 { uv_width = 4 }; if uv_height < 4 { uv_height = 4 }
+    uv: ChromaModeResult
+    if has_chroma {
+        uv = ReadLosslessChromaMode(*tile.decoder, *tile.chroma_modes, *tile.mode_cdfs, mode, uv_width, uv_height, extended_block, tile.cancellation)
+        if uv.error.code != DecodeOK { return uv.error }
+    }
+    tile.palette.count = 0; tile.uv_palette.count = 0
+    palette_context: s32
+    w := width; h := height
+    while w > 1 { palette_context += 1; w /= 2 }
+    while h > 1 { palette_context += 1; h /= 2 }
+    palette_context -= 6
+    if tile.screen_tools && extended_block && mode == 0 {
+        neighbor_context: s32
+        if row4 > 0 && tile.palette_sizes[(row4 - 1) * 16 + column4] > 0 { neighbor_context += 1 }
+        if column4 > 0 && tile.palette_sizes[row4 * 16 + column4 - 1] > 0 { neighbor_context += 1 }
+        at := (palette_context * 3 + neighbor_context) * 3
+        palette := ReadSymbol(*tile.decoder, tile.palette_cdfs.enabled[at:at + 3])
+        if tile.decoder.error.code != DecodeOK { return tile.decoder.error }
+        if palette != 0 {
+            above_palette: [8]u16; left_palette: [8]u16
+            above_count: s32; left_count: s32
+            if row4 > 0 && row4 % 16 != 0 {
+                index := (row4 - 1) * 16 + column4
+                above_count = cast(s32)tile.palette_sizes[index]
+                for i: 0..above_count - 1 { above_palette[i] = tile.palette_colors[index * 8 + i] }
+            }
+            if column4 > 0 {
+                index := row4 * 16 + column4 - 1
+                left_count = cast(s32)tile.palette_sizes[index]
+                for i: 0..left_count - 1 { left_palette[i] = tile.palette_colors[index * 8 + i] }
+            }
+            cache := BuildPaletteCache(above_palette[:above_count], left_palette[:left_count])
+            if cache.error.code != DecodeOK { return cache.error }
+            error := ReadPaletteColors(*tile.decoder, tile.palette_cdfs.size[:], palette_context,
+                cache.colors[:cache.count], tile.bit_depth, false, *tile.palette, tile.cancellation)
+            if error.code != DecodeOK { return error }
+        }
+    }
+    if tile.screen_tools && extended_block && has_chroma && uv.mode == 0 {
+        at := ifx tile.palette.count > 0 then 3 else 0
+        palette := ReadSymbol(*tile.decoder, tile.chroma_modes.palette[at:at + 3])
+        if tile.decoder.error.code != DecodeOK { return tile.decoder.error }
+        if palette != 0 {
+            above_palette: [8]u16; left_palette: [8]u16
+            above_count: s32; left_count: s32
+            // Palette caches follow the luma MI grid, including non-chroma
+            // leaves; the chroma prediction availability grid is separate.
+            if row4 > 0 && row4 % 16 != 0 {
+                index := (row4 - 1) * 16 + column4
+                above_count = cast(s32)tile.uv_palette_sizes[index]
+                for i: 0..above_count - 1 { above_palette[i] = tile.uv_palette_colors[index * 8 + i] }
+            }
+            if column4 > 0 {
+                index := row4 * 16 + column4 - 1
+                left_count = cast(s32)tile.uv_palette_sizes[index]
+                for i: 0..left_count - 1 { left_palette[i] = tile.uv_palette_colors[index * 8 + i] }
+            }
+            cache := BuildPaletteCache(above_palette[:above_count], left_palette[:left_count])
+            if cache.error.code != DecodeOK { return cache.error }
+            error := ReadPaletteColors(*tile.decoder, tile.uv_palette_cdfs.size[:], palette_context,
+                cache.colors[:cache.count], tile.bit_depth, true, *tile.uv_palette, tile.cancellation)
+            if error.code != DecodeOK { return error }
+        }
+    }
+    filter_mode: s32 = -1
+    if tile.filter_intra && mode == 0 && tile.palette.count == 0 && width <= 32 && height <= 32 {
+        block_index := FilterIntraBlockIndex(width, height)
+        if block_index < 0 { return Error(MalformedInput, tile.decoder.bits.byte) }
+        at := block_index * 3
+        enabled := ReadSymbol(*tile.decoder, tile.filter_cdfs.enabled[at:at + 3])
+        if enabled != 0 { filter_mode = ReadSymbol(*tile.decoder, tile.filter_cdfs.mode[:]) }
+        if tile.decoder.error.code != DecodeOK { return tile.decoder.error }
+    }
+    onscreen_width := tile.result.width - column4 * 4
+    onscreen_height := tile.result.height - row4 * 4
+    if onscreen_width > width { onscreen_width = width }
+    if onscreen_height > height { onscreen_height = height }
+    if tile.palette.count > 0 {
+        error := ReadPaletteMap(*tile.decoder, tile.palette_cdfs.color[:], width, height,
+            onscreen_width, onscreen_height, *tile.palette, tile.cancellation)
+        if error.code != DecodeOK { return error }
+    }
+    if tile.uv_palette.count > 0 {
+        uv_onscreen_width := onscreen_width / (1 + tile.subsampling_x)
+        uv_onscreen_height := onscreen_height / (1 + tile.subsampling_y)
+        if width / (1 + tile.subsampling_x) < 4 { uv_onscreen_width += 2 }
+        if height / (1 + tile.subsampling_y) < 4 { uv_onscreen_height += 2 }
+        error := ReadPaletteMap(*tile.decoder, tile.uv_palette_cdfs.color[:], uv_width, uv_height,
+            uv_onscreen_width, uv_onscreen_height, *tile.uv_palette, tile.cancellation)
+        if error.code != DecodeOK { return error }
+    }
+    edge_filter_type: s32
+    if row4 > 0 {
+        above_mode := tile.block_mode[(row4 - 1) * 16 + column4]
+        if above_mode >= 9 && above_mode <= 11 { edge_filter_type = 1 }
+    }
+    if column4 > 0 {
+        left_mode := tile.block_mode[row4 * 16 + column4 - 1]
+        if left_mode >= 9 && left_mode <= 11 { edge_filter_type = 1 }
+    }
+    columns := width / 4; rows := height / 4
+    limit := cast(s32)(cast(u32)1 << cast(u32)tile.bit_depth)
+    for dy: 0..rows - 1 {
+        for dx: 0..columns - 1 {
+            error := CancellationError(tile.cancellation)
+            if error.code != DecodeOK { return error }
+            x := column4 + cast(s32)dx; y := row4 + cast(s32)dy
+            if x >= tile.result.width / 4 || y >= tile.result.height / 4 { continue }
+            coefficients: CoeffBlock4x4
+            if skipped == 0 {
+                top: s32; left: s32
+                if y > 0 { top = tile.above_level[x] }
+                if x > 0 { left = tile.left_level[y] }
+                maximum := ifx top > left then top else left
+                minimum := ifx top < left then top else left
+                skip_context: s32
+                if width == 4 && height == 4 { skip_context = 0 }
+                else if maximum == 0 { skip_context = 1 }
+                else if minimum == 0 { skip_context = ifx maximum > 3 then 3 else 2 }
+                else if maximum <= 3 { skip_context = 4 }
+                else if minimum <= 3 { skip_context = 5 }
+                else { skip_context = 6 }
+                dc: s32
+                if y > 0 {
+                    if tile.above_dc[x] == 1 { dc -= 1 } else if tile.above_dc[x] == 2 { dc += 1 }
+                }
+                if x > 0 {
+                    if tile.left_dc[y] == 1 { dc -= 1 } else if tile.left_dc[y] == 2 { dc += 1 }
+                }
+                dc_context: s32 = ifx dc < 0 then 1 else (ifx dc > 0 then 2 else 0)
+                coefficients = ReadLosslessCoefficients4x4(*tile.decoder, *tile.coefficients, skip_context, dc_context, tile.cancellation)
+                if coefficients.error.code != DecodeOK { return coefficients.error }
+            }
+            tile.above_level[x] = coefficients.level; tile.left_level[y] = coefficients.level
+            tile.above_dc[x] = coefficients.dc_category; tile.left_dc[y] = coefficients.dc_category
+            residual := InverseLossless4x4(coefficients.quant[:], tile.bit_depth, tile.cancellation)
+            if residual.error.code != DecodeOK { return residual.error }
+            stride := tile.result.width
+            above: [8]u16; left: [8]u16
+            have_top_right := y > 0 && x + 1 < stride / 4 && tile.block_decoded[(y - 1) * 16 + x + 1] != 0
+            have_bottom_left := x > 0 && y + 1 < tile.result.height / 4 && tile.block_decoded[(y + 1) * 16 + x - 1] != 0
+            top_limit := x * 4 + (ifx have_top_right then 8 else 4) - 1
+            left_limit := y * 4 + (ifx have_bottom_left then 8 else 4) - 1
+            if top_limit >= stride { top_limit = stride - 1 }
+            if left_limit >= tile.result.height { left_limit = tile.result.height - 1 }
+            for i: 0..7 {
+                top_at := x * 4 + cast(s32)i; if top_at > top_limit { top_at = top_limit }
+                left_at := y * 4 + cast(s32)i; if left_at > left_limit { left_at = left_limit }
+                if y > 0 { above[i] = tile.result.samples[(y * 4 - 1) * stride + top_at] }
+                else if x > 0 { above[i] = tile.result.samples[y * 4 * stride + x * 4 - 1] }
+                else { above[i] = cast(u16)((limit >> 1) - 1) }
+                if x > 0 { left[i] = tile.result.samples[left_at * stride + x * 4 - 1] }
+                else if y > 0 { left[i] = tile.result.samples[(y * 4 - 1) * stride + x * 4] }
+                else { left[i] = cast(u16)((limit >> 1) + 1) }
+            }
+            corner := cast(u16)(limit >> 1)
+            if x > 0 && y > 0 { corner = tile.result.samples[(y * 4 - 1) * stride + x * 4 - 1] }
+            else if y > 0 { corner = above[0] }
+            else if x > 0 { corner = left[0] }
+            prediction: Prediction4x4
+            if tile.palette.count > 0 {
+                for row: 0..3 {
+                    for column: 0..3 {
+                        index := tile.palette.indices[(dy * 4 + row) * 64 + dx * 4 + column]
+                        prediction.samples[row * 4 + column] = tile.palette.colors[index]
+                    }
+                }
+            } else if filter_mode >= 0 { prediction = PredictFilterIntra4x4(above[:4], left[:4], corner, filter_mode, tile.bit_depth, tile.cancellation) }
+            else if mode >= 1 && mode <= 8 {
+                prediction = PredictDirectional4x4(above[:], left[:], corner, y > 0, x > 0, mode, angle_delta, tile.edge_filter, edge_filter_type, tile.bit_depth, tile.cancellation)
+            } else { prediction = PredictIntra4x4(above[:4], left[:4], corner, y > 0, x > 0, mode, tile.bit_depth, tile.cancellation) }
+            if prediction.error.code != DecodeOK { return prediction.error }
+            for row: 0..3 {
+                for column: 0..3 {
+                    value := cast(s32)prediction.samples[row * 4 + column] + residual.samples[row * 4 + column]
+                    if value < 0 { value = 0 }
+                    if value >= limit { value = limit - 1 }
+                    tile.result.samples[(y * 4 + row) * stride + x * 4 + column] = cast(u16)value
+                }
+            }
+            tile.block_decoded[y * 16 + x] = 1
+        }
+    }
+    if has_chroma {
+        luma_width := column4 * 4 + width; if luma_width > tile.result.width { luma_width = tile.result.width }
+        luma_height := row4 * 4 + height; if luma_height > tile.result.height { luma_height = tile.result.height }
+        error := DecodeLosslessChroma(tile, row4, column4, uv_width, uv_height, skipped, uv.mode, uv.angle_delta,
+            uv.alpha_u, uv.alpha_v, luma_width, luma_height)
+        if error.code != DecodeOK { return error }
+    }
+    for y: row4..row4 + rows - 1 {
+        for x: column4..column4 + columns - 1 {
+            tile.block_width[y * 16 + x] = cast(u8)width
+            tile.block_height[y * 16 + x] = cast(u8)height
+            tile.block_skip[y * 16 + x] = cast(u8)skipped
+            tile.block_mode[y * 16 + x] = cast(u8)mode
+            tile.palette_sizes[y * 16 + x] = cast(u8)tile.palette.count
+            for color: 0..tile.palette.count - 1 { tile.palette_colors[(y * 16 + x) * 8 + color] = tile.palette.colors[color] }
+            tile.uv_palette_sizes[y * 16 + x] = cast(u8)tile.uv_palette.count
+            for color: 0..tile.uv_palette.count - 1 { tile.uv_palette_colors[(y * 16 + x) * 8 + color] = tile.uv_palette.colors[color] }
+        }
+    }
+    return Error(DecodeOK)
+}
+
+// At most six frames (five split edges) from a 128x128 superblock to 4x4. Current exposed frame
+// dimensions are <=64. Boundary nodes force SPLIT in both dimensions or use
+// the specification's derived binary partition probability in one dimension.
+DecodeLosslessPartition :: (tile: *LosslessTile, row4: s32, column4: s32, side: s32) -> DecodeError {
+    error := CancellationError(tile.cancellation)
+    if error.code != DecodeOK { return error }
+    if row4 >= tile.result.height / 4 || column4 >= tile.result.width / 4 { return Error(DecodeOK) }
+    if tile.nodes >= 1024 || side < 4 || side > 128 || row4 < 0 || column4 < 0 { return Error(LimitExceeded, tile.decoder.bits.byte) }
+    tile.nodes += 1
+    part: s32
+    if side > 4 {
+        half4 := side / 8
+        has_rows := row4 + half4 < tile.result.height / 4
+        has_columns := column4 + half4 < tile.result.width / 4
+        if has_rows && has_columns {
+            if side > 64 { return Error(UnsupportedCapability, tile.decoder.bits.byte) }
+            above: s32; left: s32
+            if row4 > 0 { above = cast(s32)tile.block_width[(row4 - 1) * 16 + column4] }
+            if column4 > 0 { left = cast(s32)tile.block_height[row4 * 16 + column4 - 1] }
+            part = ReadSquarePartition(*tile.decoder, *tile.partitions, side, above, left)
+            if tile.decoder.error.code != DecodeOK { return tile.decoder.error }
+        } else if !has_rows && !has_columns { part = 3 }
+        else {
+            above: s32; left: s32
+            if row4 > 0 { above = cast(s32)tile.block_width[(row4 - 1) * 16 + column4] }
+            if column4 > 0 { left = cast(s32)tile.block_height[row4 * 16 + column4 - 1] }
+            part = ReadBoundaryPartition(*tile.decoder, *tile.partitions, side, above, left, has_rows)
+            if tile.decoder.error.code != DecodeOK { return tile.decoder.error }
+        }
+    }
+    half := side / 2; step := side / 8
+    if part == 0 { return DecodeLosslessIntraBlock(tile, row4, column4, side, side) }
+    if part == 1 {
+        error = DecodeLosslessIntraBlock(tile, row4, column4, side, half)
+        if error.code != DecodeOK { return error }
+        return DecodeLosslessIntraBlock(tile, row4 + step, column4, side, half)
+    }
+    if part == 2 {
+        error = DecodeLosslessIntraBlock(tile, row4, column4, half, side)
+        if error.code != DecodeOK { return error }
+        return DecodeLosslessIntraBlock(tile, row4, column4 + step, half, side)
+    }
+    if part == 3 {
+        error = DecodeLosslessPartition(tile, row4, column4, half)
+        if error.code != DecodeOK { return error }
+        error = DecodeLosslessPartition(tile, row4, column4 + step, half)
+        if error.code != DecodeOK { return error }
+        error = DecodeLosslessPartition(tile, row4 + step, column4, half)
+        if error.code != DecodeOK { return error }
+        return DecodeLosslessPartition(tile, row4 + step, column4 + step, half)
+    }
+    if part == 4 {
+        error = DecodeLosslessIntraBlock(tile, row4, column4, half, half)
+        if error.code != DecodeOK { return error }
+        error = DecodeLosslessIntraBlock(tile, row4, column4 + step, half, half)
+        if error.code != DecodeOK { return error }
+        return DecodeLosslessIntraBlock(tile, row4 + step, column4, side, half)
+    }
+    if part == 5 {
+        error = DecodeLosslessIntraBlock(tile, row4, column4, side, half)
+        if error.code != DecodeOK { return error }
+        error = DecodeLosslessIntraBlock(tile, row4 + step, column4, half, half)
+        if error.code != DecodeOK { return error }
+        return DecodeLosslessIntraBlock(tile, row4 + step, column4 + step, half, half)
+    }
+    if part == 6 {
+        error = DecodeLosslessIntraBlock(tile, row4, column4, half, half)
+        if error.code != DecodeOK { return error }
+        error = DecodeLosslessIntraBlock(tile, row4 + step, column4, half, half)
+        if error.code != DecodeOK { return error }
+        return DecodeLosslessIntraBlock(tile, row4, column4 + step, half, side)
+    }
+    if part == 7 {
+        error = DecodeLosslessIntraBlock(tile, row4, column4, half, side)
+        if error.code != DecodeOK { return error }
+        error = DecodeLosslessIntraBlock(tile, row4, column4 + step, half, half)
+        if error.code != DecodeOK { return error }
+        return DecodeLosslessIntraBlock(tile, row4 + step, column4 + step, half, half)
+    }
+    if (part == 8 || part == 9) && side >= 16 {
+        for strip: 0..3 {
+            if part == 8 { error = DecodeLosslessIntraBlock(tile, row4 + cast(s32)strip * (side / 16), column4, side, side / 4) }
+            else { error = DecodeLosslessIntraBlock(tile, row4, column4 + cast(s32)strip * (side / 16), side / 4, side) }
+            if error.code != DecodeOK { return error }
+        }
+        return Error(DecodeOK)
+    }
+    return Error(UnsupportedCapability, tile.decoder.bits.byte)
+}
+
+DecodeLosslessStill :: (input: BorrowedBytes, begin: s64, end: s64, bit_depth: s32,
+    width: s32, height: s32, disable_cdf_update: bool, cancellation: *Cancellation = null,
+    allow_screen_content_tools: bool = false, enable_filter_intra: bool = false,
+    enable_intra_edge_filter: bool = false, monochrome: bool = true,
+    subsampling_x: s32 = 0, subsampling_y: s32 = 0) -> DecodedLosslessStill {
+    tile: LosslessTile
+    tile.result.error = CancellationError(cancellation)
+    if tile.result.error.code != DecodeOK { return tile.result }
+    if (bit_depth != 8 && bit_depth != 10 && bit_depth != 12) ||
+        (width < 1 || width > 64 || height < 1 || height > 64) || subsampling_x < 0 || subsampling_x > 1 ||
+        subsampling_y < 0 || subsampling_y > 1 || (!monochrome && subsampling_x == 0 && subsampling_y == 1) { tile.result.error = Error(InvalidInput); return tile.result }
+    tile.decoder = NewRange(input, begin, end, disable_cdf_update)
+    if tile.decoder.error.code != DecodeOK { tile.result.error = tile.decoder.error; return tile.result }
+    tile.result.width = ((width + 7) / 8) * 8; tile.result.height = ((height + 7) / 8) * 8; tile.bit_depth = bit_depth; tile.cancellation = cancellation
+    tile.has_chroma = !monochrome; tile.subsampling_x = subsampling_x; tile.subsampling_y = subsampling_y
+    tile.result.chroma_width = tile.result.width / (1 + subsampling_x); tile.result.chroma_height = tile.result.height / (1 + subsampling_y)
+    tile.screen_tools = allow_screen_content_tools
+    tile.filter_intra = enable_filter_intra; tile.filter_cdfs = NewFilterIntraCDF()
+    tile.edge_filter = enable_intra_edge_filter
+    tile.coefficients = NewCoeffCDF4x4(); tile.partitions = NewPartitionCDF()
+    tile.chroma_coefficients = NewChromaCoeffCDF4x4(); tile.chroma_modes = NewChromaModeCDF()
+    skips: [9]u16 = .[31671,32768,0,16515,32768,0,4576,32768,0]
+    tile.skip_cdf = skips; tile.mode_cdfs = NewIntraModeCDF()
+    tile.palette_cdfs = NewPaletteCDF(); tile.uv_palette_cdfs = NewPaletteUVCDF()
+    tile.result.error = DecodeLosslessPartition(*tile, 0, 0, 128)
+    if tile.result.error.code != DecodeOK { return tile.result }
+    tile.result.error = FinishRange(*tile.decoder)
+    if tile.result.error.code == DecodeOK { tile.result.error = CancellationError(cancellation) }
+    return tile.result
+}

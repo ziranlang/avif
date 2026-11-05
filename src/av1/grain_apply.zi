@@ -1,0 +1,201 @@
+#import, file "./grain_params.zi";
+#import, file "./grain_noise.zi";
+#import, file "./grain_scaling.zi";
+using Codec :: #import "image_codec/api"
+
+// Borrowed source-domain samples. Strides are samples, not bytes. The scalar
+// reference is bounded to64x64, matching the current owned still-frame engine.
+GrainPictureView :: struct {
+    y: []u16; u: []u16; v: []u16; y_stride: s32; chroma_stride: s32;
+    width: s32; height: s32; monochrome: bool; subsampling_x: s32;
+    subsampling_y: s32; bit_depth: s32; matrix_identity: bool;
+}
+// Owned fixed arrays with stride64, zero inactive cells, no allocation. Caller
+// accounts these bounded records in its working-memory reservation.
+GrainPicture :: struct {
+    y: [4096]u16; u: [4096]u16; v: [4096]u16;
+    width: s32; height: s32; chroma_width: s32; chroma_height: s32; error: DecodeError;
+}
+
+#scope_file
+GrainApplyFloor :: (value: s64, divisor: s64) -> s64 {
+    return ifx value < 0 then -((-value + divisor - 1) / divisor) else value / divisor
+}
+GrainApplyRound :: (value: s64, shift: s32) -> s64 {
+    divisor := cast(s64)(cast(u64)1 << cast(u64)shift)
+    return GrainApplyFloor(value + divisor / 2, divisor)
+}
+GrainApplyClip :: (value: s64, minimum: s64, maximum: s64) -> s64 {
+    if value < minimum { return minimum }; if value > maximum { return maximum }; return value
+}
+GrainStripeNoise :: (stripes: []s16, plane: s32, x: s32, y: s32,
+    sub_y: s32, overlap: bool, center: s32) -> s64 {
+    rows := 32 / (1 + sub_y)
+    stripe := y / rows; row := y % rows
+    value := cast(s64)stripes[stripe * 6732 + plane * 2244 + row * 66 + x]
+    if overlap && stripe > 0 && row < 2 / (1 + sub_y) {
+        old := cast(s64)stripes[(stripe - 1) * 6732 + plane * 2244 + (row + rows) * 66 + x]
+        if sub_y == 1 { value = old * 23 + value * 22 }
+        else if row == 0 { value = old * 27 + value * 17 }
+        else { value = old * 17 + value * 27 }
+        value = GrainApplyClip(GrainApplyRound(value, 5), -cast(s64)center, cast(s64)center - 1)
+    }
+    return value
+}
+
+#scope_export
+// AV1 7.18.3.5: grain tiles, horizontal/vertical overlap, chroma scaling from
+// original luma, signed chroma mixing, and full/restricted sample clipping.
+ApplyFilmGrain64 :: (input: GrainPictureView, parameters: FilmGrainParams,
+    cancellation: *Cancellation = null) -> GrainPicture {
+    result: GrainPicture
+    result.error = CancellationError(cancellation)
+    if result.error.code != DecodeOK { return result }
+    if input.width < 1 || input.width > 64 || input.height < 1 || input.height > 64 ||
+        input.y_stride < input.width || input.y_stride > 64 ||
+        (input.bit_depth != 8 && input.bit_depth != 10 && input.bit_depth != 12) ||
+        input.subsampling_x < 0 || input.subsampling_x > 1 || input.subsampling_y < 0 || input.subsampling_y > 1 ||
+        input.y.count < cast(s64)(input.height - 1) * input.y_stride + input.width || input.y.count > 4096 {
+        result.error = Error(InvalidInput); return result
+    }
+    chroma_width := (input.width + input.subsampling_x) / (1 + input.subsampling_x)
+    chroma_height := (input.height + input.subsampling_y) / (1 + input.subsampling_y)
+    if !input.monochrome && (input.chroma_stride < chroma_width || input.chroma_stride > 64 ||
+        input.u.count < cast(s64)(chroma_height - 1) * input.chroma_stride + chroma_width || input.u.count > 4096 ||
+        input.v.count < cast(s64)(chroma_height - 1) * input.chroma_stride + chroma_width || input.v.count > 4096) {
+        result.error = Error(InvalidInput); return result
+    }
+    maximum := cast(s64)((cast(u64)1 << cast(u64)input.bit_depth) - 1)
+    y_output: [4096]u16; u_output: [4096]u16; v_output: [4096]u16
+    for y: 0..input.height - 1 {
+        result.error = CancellationError(cancellation)
+        if result.error.code != DecodeOK { return result }
+        for x: 0..input.width - 1 {
+            value := input.y[y * input.y_stride + x]
+            if cast(s64)value > maximum { result.error = Error(InvalidInput); return result }
+            y_output[y * 64 + x] = value
+        }
+    }
+    if !input.monochrome { for y: 0..chroma_height - 1 {
+        result.error = CancellationError(cancellation)
+        if result.error.code != DecodeOK { return result }
+        for x: 0..chroma_width - 1 {
+            u := input.u[y * input.chroma_stride + x]; v := input.v[y * input.chroma_stride + x]
+            if cast(s64)u > maximum || cast(s64)v > maximum { result.error = Error(InvalidInput); return result }
+            u_output[y * 64 + x] = u; v_output[y * 64 + x] = v
+        }
+    } }
+    if parameters.apply_grain {
+        if parameters.scaling_shift < 8 || parameters.scaling_shift > 11 ||
+            parameters.cb_mult < 0 || parameters.cb_mult > 255 || parameters.cb_luma_mult < 0 || parameters.cb_luma_mult > 255 ||
+            parameters.cb_offset < 0 || parameters.cb_offset > 511 || parameters.cr_mult < 0 || parameters.cr_mult > 255 ||
+            parameters.cr_luma_mult < 0 || parameters.cr_luma_mult > 255 || parameters.cr_offset < 0 || parameters.cr_offset > 511 {
+            result.error = Error(InvalidInput); return result
+        }
+        noise := GenerateGrainNoise(parameters, input.monochrome, input.subsampling_x, input.subsampling_y, input.bit_depth, cancellation)
+        if noise.error.code != DecodeOK { result.error = noise.error; return result }
+        y_lut := BuildGrainScaling(parameters.scaling_points_y[:parameters.num_y_points * 2], cancellation)
+        if y_lut.error.code != DecodeOK { result.error = y_lut.error; return result }
+        u_lut := y_lut; v_lut := y_lut
+        if !input.monochrome && !parameters.chroma_scaling_from_luma {
+            u_lut = BuildGrainScaling(parameters.scaling_points_cb[:parameters.num_cb_points * 2], cancellation)
+            if u_lut.error.code != DecodeOK { result.error = u_lut.error; return result }
+            v_lut = BuildGrainScaling(parameters.scaling_points_cr[:parameters.num_cr_points * 2], cancellation)
+            if v_lut.error.code != DecodeOK { result.error = v_lut.error; return result }
+        }
+        center := cast(s32)((maximum + 1) / 2)
+        stripes: [13464]s16
+        last_plane: s32 = ifx input.monochrome then 0 else 2
+        for stripe: 0..(input.height - 1) / 32 {
+            random: GrainRandom; random.register_value = (parameters.random_seed ^
+                (cast(u32)((stripe * 37 + 178) & 255) << 8) ^ cast(u32)((stripe * 173 + 105) & 255))
+            for block: 0..(input.width - 1) / 32 {
+                offset := NextGrainRandom(*random, 8, cancellation)
+                if offset.error.code != DecodeOK { result.error = offset.error; return result }
+                offset_x := offset.value / 16; offset_y := offset.value & 15
+                for plane: 0..last_plane {
+                    sub_x: s32; sub_y: s32; source := noise.y[:]
+                    if plane > 0 {
+                        sub_x = input.subsampling_x; sub_y = input.subsampling_y
+                        source = ifx plane == 1 then noise.cb[:] else noise.cr[:]
+                    }
+                    start_x: s32 = ifx sub_x == 1 then 6 + offset_x else 9 + offset_x * 2
+                    start_y: s32 = ifx sub_y == 1 then 6 + offset_y else 9 + offset_y * 2
+                    for row: 0..34 / (1 + sub_y) - 1 {
+                        result.error = CancellationError(cancellation)
+                        if result.error.code != DecodeOK { return result }
+                        for column: 0..34 / (1 + sub_x) - 1 {
+                            index := stripe * 6732 + plane * 2244 + row * 66 + block * 32 / (1 + sub_x) + column
+                            value := cast(s64)source[(start_y + row) * 82 + start_x + column]
+                            if parameters.overlap_flag && block > 0 && column < 2 / (1 + sub_x) {
+                                old := cast(s64)stripes[index]
+                                if sub_x == 1 { value = old * 23 + value * 22 }
+                                else if column == 0 { value = old * 27 + value * 17 }
+                                else { value = old * 17 + value * 27 }
+                                value = GrainApplyClip(GrainApplyRound(value, 5), -cast(s64)center, cast(s64)center - 1)
+                            }
+                            stripes[index] = cast(s16)value
+                        }
+                    }
+                }
+            }
+        }
+        depth_scale := cast(s64)(cast(u64)1 << cast(u64)(input.bit_depth - 8))
+        minimum: s64; max_luma := maximum; max_chroma := maximum
+        if parameters.clip_to_restricted_range {
+            minimum = 16 * depth_scale; max_luma = 235 * depth_scale
+            max_chroma = (ifx input.matrix_identity then 235 else 240) * depth_scale
+        }
+        if !input.monochrome { for y: 0..chroma_height - 1 {
+            result.error = CancellationError(cancellation)
+            if result.error.code != DecodeOK { return result }
+            for x: 0..chroma_width - 1 {
+                luma_x := x * (1 + input.subsampling_x); luma_y := y * (1 + input.subsampling_y)
+                luma := cast(s64)input.y[luma_y * input.y_stride + luma_x]
+                if input.subsampling_x == 1 {
+                    next_x := luma_x + 1; if next_x >= input.width { next_x = input.width - 1 }
+                    luma = GrainApplyRound(luma + cast(s64)input.y[luma_y * input.y_stride + next_x], 1)
+                }
+                for plane: 1..2 {
+                    if !parameters.chroma_scaling_from_luma &&
+                        ((plane == 1 && parameters.num_cb_points == 0) || (plane == 2 && parameters.num_cr_points == 0)) { continue }
+                    source := input.u; lut := u_lut.samples[:]; output := u_output[:]
+                    multiplier := parameters.cb_mult; luma_multiplier := parameters.cb_luma_mult; offset := parameters.cb_offset
+                    if plane == 2 {
+                        source = input.v; lut = v_lut.samples[:]; output = v_output[:]
+                        multiplier = parameters.cr_mult; luma_multiplier = parameters.cr_luma_mult; offset = parameters.cr_offset
+                    }
+                    original := cast(s64)source[y * input.chroma_stride + x]
+                    merged := luma
+                    if !parameters.chroma_scaling_from_luma {
+                        combined := luma * (luma_multiplier - 128) + original * (multiplier - 128)
+                        merged = GrainApplyClip(GrainApplyFloor(combined, 64) + (offset - 256) * depth_scale, 0, maximum)
+                    }
+                    sampled := SampleGrainScaling(lut, cast(s32)merged, input.bit_depth)
+                    if sampled.error.code != DecodeOK { result.error = sampled.error; return result }
+                    grain := GrainStripeNoise(stripes[:], cast(s32)plane, cast(s32)x, cast(s32)y, input.subsampling_y, parameters.overlap_flag, center)
+                    delta := GrainApplyRound(cast(s64)sampled.value * grain, parameters.scaling_shift)
+                    output[y * 64 + x] = cast(u16)GrainApplyClip(original + delta, minimum, max_chroma)
+                }
+            }
+        } }
+        if parameters.num_y_points > 0 { for y: 0..input.height - 1 {
+            result.error = CancellationError(cancellation)
+            if result.error.code != DecodeOK { return result }
+            for x: 0..input.width - 1 {
+                original := cast(s64)input.y[y * input.y_stride + x]
+                sampled := SampleGrainScaling(y_lut.samples[:], cast(s32)original, input.bit_depth)
+                if sampled.error.code != DecodeOK { result.error = sampled.error; return result }
+                grain := GrainStripeNoise(stripes[:], 0, cast(s32)x, cast(s32)y, 0, parameters.overlap_flag, center)
+                delta := GrainApplyRound(cast(s64)sampled.value * grain, parameters.scaling_shift)
+                y_output[y * 64 + x] = cast(u16)GrainApplyClip(original + delta, minimum, max_luma)
+            }
+        } }
+    }
+    result.error = CancellationError(cancellation)
+    if result.error.code != DecodeOK { return result }
+    result.y = y_output; result.u = u_output; result.v = v_output
+    result.width = input.width; result.height = input.height
+    if !input.monochrome { result.chroma_width = chroma_width; result.chroma_height = chroma_height }
+    return result
+}

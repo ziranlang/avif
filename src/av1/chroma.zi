@@ -1,0 +1,124 @@
+#import, file "./tile_state.zi";
+#import, file "./coefficients.zi";
+#import, file "./transforms.zi";
+#import, file "./prediction.zi";
+#import, file "./directional.zi";
+#import, file "./cfl.zi";
+using Codec :: #import "image_codec/api"
+
+// Lossless U followed by V, each in raster4x4 order. The probability model is
+// shared, while level/DC contexts and reconstructed samples are plane-specific.
+DecodeLosslessChroma :: (tile: *LosslessTile, row4: s32, column4: s32,
+    width: s32, height: s32, skipped: s32, mode: s32, angle_delta: s32,
+    alpha_u: s32, alpha_v: s32, luma_width: s32, luma_height: s32) -> DecodeError {
+    base_x := column4 / (1 + tile.subsampling_x)
+    base_y := row4 / (1 + tile.subsampling_y)
+    stride := tile.result.chroma_width; plane_height := tile.result.chroma_height
+    limit := cast(s32)(cast(u32)1 << cast(u32)tile.bit_depth)
+    filter_type: s32
+    if base_y > 0 {
+        above := tile.uv_mode[(base_y - 1) * 16 + base_x]
+        if above >= 9 && above <= 11 { filter_type = 1 }
+    }
+    if base_x > 0 {
+        left := tile.uv_mode[base_y * 16 + base_x - 1]
+        if left >= 9 && left <= 11 { filter_type = 1 }
+    }
+    for plane: 0..1 {
+        samples := tile.result.u_samples[:]
+        if plane == 1 { samples = tile.result.v_samples[:] }
+        // The U pass may have marked this footprint. Restore its initial
+        // unavailable state before V, retaining completed neighboring blocks.
+        for row: base_y..base_y + height / 4 - 1 {
+            for column: base_x..base_x + width / 4 - 1 {
+                if row < plane_height / 4 && column < stride / 4 { tile.uv_decoded[row * 16 + column] = 0 }
+            }
+        }
+        for dy: 0..height / 4 - 1 {
+            for dx: 0..width / 4 - 1 {
+                error := CancellationError(tile.cancellation)
+                if error.code != DecodeOK { return error }
+                x := base_x + cast(s32)dx; y := base_y + cast(s32)dy
+                if x >= stride / 4 || y >= plane_height / 4 { continue }
+                coefficient: CoeffBlock4x4
+                context_x := plane * 16 + x; context_y := plane * 16 + y
+                if skipped == 0 {
+                    skip_context: s32
+                    if width * height > 16 { skip_context = 3 }
+                    if y > 0 && (tile.uv_above_level[context_x] != 0 || tile.uv_above_dc[context_x] != 0) { skip_context += 1 }
+                    if x > 0 && (tile.uv_left_level[context_y] != 0 || tile.uv_left_dc[context_y] != 0) { skip_context += 1 }
+                    dc: s32
+                    if y > 0 {
+                        if tile.uv_above_dc[context_x] == 1 { dc -= 1 } else if tile.uv_above_dc[context_x] == 2 { dc += 1 }
+                    }
+                    if x > 0 {
+                        if tile.uv_left_dc[context_y] == 1 { dc -= 1 } else if tile.uv_left_dc[context_y] == 2 { dc += 1 }
+                    }
+                    dc_context: s32 = ifx dc < 0 then 1 else (ifx dc > 0 then 2 else 0)
+                    coefficient = ReadLosslessCoefficients4x4(*tile.decoder, *tile.chroma_coefficients, skip_context, dc_context, tile.cancellation)
+                    if coefficient.error.code != DecodeOK { return coefficient.error }
+                }
+                tile.uv_above_level[context_x] = coefficient.level; tile.uv_left_level[context_y] = coefficient.level
+                tile.uv_above_dc[context_x] = coefficient.dc_category; tile.uv_left_dc[context_y] = coefficient.dc_category
+                residual := InverseLossless4x4(coefficient.quant[:], tile.bit_depth, tile.cancellation)
+                if residual.error.code != DecodeOK { return residual.error }
+                above: [8]u16; left: [8]u16
+                have_right := y > 0 && x + 1 < stride / 4 && tile.uv_decoded[(y - 1) * 16 + x + 1] != 0
+                have_bottom := x > 0 && y + 1 < plane_height / 4 && tile.uv_decoded[(y + 1) * 16 + x - 1] != 0
+                top_limit := x * 4 + (ifx have_right then 8 else 4) - 1
+                left_limit := y * 4 + (ifx have_bottom then 8 else 4) - 1
+                if top_limit >= stride { top_limit = stride - 1 }
+                if left_limit >= plane_height { left_limit = plane_height - 1 }
+                for i: 0..7 {
+                    top_at := x * 4 + cast(s32)i; if top_at > top_limit { top_at = top_limit }
+                    left_at := y * 4 + cast(s32)i; if left_at > left_limit { left_at = left_limit }
+                    if y > 0 { above[i] = samples[(y * 4 - 1) * stride + top_at] }
+                    else if x > 0 { above[i] = samples[y * 4 * stride + x * 4 - 1] }
+                    else { above[i] = cast(u16)((limit >> 1) - 1) }
+                    if x > 0 { left[i] = samples[left_at * stride + x * 4 - 1] }
+                    else if y > 0 { left[i] = samples[(y * 4 - 1) * stride + x * 4] }
+                    else { left[i] = cast(u16)((limit >> 1) + 1) }
+                }
+                corner := cast(u16)(limit >> 1)
+                if x > 0 && y > 0 { corner = samples[(y * 4 - 1) * stride + x * 4 - 1] }
+                else if y > 0 { corner = above[0] }
+                else if x > 0 { corner = left[0] }
+                prediction: Prediction4x4
+                if tile.uv_palette.count > 0 {
+                    for row: 0..3 {
+                        for column: 0..3 {
+                            index := tile.uv_palette.indices[(dy * 4 + row) * 64 + dx * 4 + column]
+                            prediction.samples[row * 4 + column] = ifx plane == 0 then tile.uv_palette.colors[index] else tile.uv_palette.v_colors[index]
+                        }
+                    }
+                } else if mode >= 1 && mode <= 8 {
+                    prediction = PredictDirectional4x4(above[:], left[:], corner, y > 0, x > 0, mode, angle_delta,
+                        tile.edge_filter, filter_type, tile.bit_depth, tile.cancellation)
+                } else {
+                    base_mode := ifx mode == 13 then 0 else mode
+                    prediction = PredictIntra4x4(above[:4], left[:4], corner, y > 0, x > 0, base_mode, tile.bit_depth, tile.cancellation)
+                    if prediction.error.code == DecodeOK && mode == 13 {
+                        alpha := ifx plane == 0 then alpha_u else alpha_v
+                        prediction = PredictCfl4x4(tile.result.samples[:], tile.result.width, luma_width, luma_height,
+                            x * 4, y * 4, tile.subsampling_x, tile.subsampling_y, prediction.samples[0], alpha, tile.bit_depth, tile.cancellation)
+                    }
+                }
+                if prediction.error.code != DecodeOK { return prediction.error }
+                for row: 0..3 {
+                    for column: 0..3 {
+                        value := cast(s32)prediction.samples[row * 4 + column] + residual.samples[row * 4 + column]
+                        if value < 0 { value = 0 }; if value >= limit { value = limit - 1 }
+                        samples[(y * 4 + row) * stride + x * 4 + column] = cast(u16)value
+                    }
+                }
+                tile.uv_decoded[y * 16 + x] = 1
+            }
+        }
+    }
+    for y: base_y..base_y + height / 4 - 1 {
+        for x: base_x..base_x + width / 4 - 1 {
+            if y < plane_height / 4 && x < stride / 4 { tile.uv_mode[y * 16 + x] = cast(u8)mode }
+        }
+    }
+    return Error(DecodeOK)
+}

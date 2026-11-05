@@ -1,0 +1,26 @@
+#import, file "../src/av1/filter_intra.zi";
+using Codec :: #import "image_codec/api"
+
+FilterIntraBoundaries :: () -> s32 {
+    above: [4]u16; left: [4]u16
+    if PredictFilterIntra4x4(above[:3], left[:], 0, 0, 8).error.code != InvalidInput { return 1 }
+    if PredictFilterIntra4x4(above[:], left[:3], 0, 0, 8).error.code != InvalidInput { return 2 }
+    if PredictFilterIntra4x4(above[:], left[:], 0, 0, 16).error.code != InvalidInput { return 3 }
+    if PredictFilterIntra4x4(above[:], left[:], 0, -1, 8).error.code != InvalidInput { return 4 }
+    if PredictFilterIntra4x4(above[:], left[:], 0, 5, 8).error.code != InvalidInput { return 5 }
+    if PredictFilterIntra4x4(above[:], left[:], 256, 0, 8).error.code != InvalidInput { return 6 }
+    above[3] = 256
+    invalid := PredictFilterIntra4x4(above[:], left[:], 0, 0, 8)
+    if invalid.error.code != InvalidInput { return 7 }
+    for i: 0..15 { if invalid.samples[i] != 0 { return 8 } }
+    above[3] = 0; left[3] = 65535
+    if PredictFilterIntra4x4(above[:], left[:], 0, 0, 12).error.code != InvalidInput { return 9 }
+    left[3] = 0
+    token: Cancellation; Cancel(*token)
+    cancelled := PredictFilterIntra4x4(above[:], left[:], 0, 0, 8, *token)
+    if cancelled.error.code != DecodeCancelled { return 10 }
+    for i: 0..15 { if cancelled.samples[i] != 0 { return 11 } }
+    if FilterIntraBlockIndex(4, 16) != 16 || FilterIntraBlockIndex(16, 4) != 17 || FilterIntraBlockIndex(32, 8) != 19 { return 12 }
+    if FilterIntraBlockIndex(3, 4) != -1 || FilterIntraBlockIndex(4, 128) != -1 { return 13 }
+    return 0
+}
