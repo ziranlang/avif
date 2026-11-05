@@ -1,0 +1,46 @@
+using Codec :: #import "image_codec/api"
+// Source pixel coordinates to output coordinates: crop, anticlockwise irot,
+// then imir. The caller validates the crop and owns both independent buffers.
+CopyTransformed :: (source: []u8, source_width: s32, x0: s32, y0: s32,
+    width: s32, height: s32, angle: s32, mirror: s32, result: *DecodeResult,
+    token: *Cancellation) -> DecodeError {
+    for y: 0..height - 1 {
+        error := CancellationError(token)
+        if error.code != DecodeOK { return error }
+        for x: 0..width - 1 {
+            dx := x; dy := y
+            if angle == 1 { dx = y; dy = width - 1 - x }
+            else if angle == 2 { dx = width - 1 - x; dy = height - 1 - y }
+            else if angle == 3 { dx = height - 1 - y; dy = x }
+            if mirror == 0 { dy = result.image.height - 1 - dy }
+            else if mirror == 1 { dx = result.image.width - 1 - dx }
+            from := (cast(s64)(y + y0) * source_width + x + x0) * 4
+            to := (cast(s64)dy * result.image.width + dx) * 4
+            for channel: 0..3 { result.image.pixels[to + channel] = source[from + channel] }
+        }
+    }
+    return Error(DecodeOK)
+}
+// Caller output may have padding. Complete rows can remain written when
+// cooperative cancellation occurs during this copy.
+CopyTransformedToOutput :: (source: []u8, source_width: s32, x0: s32, y0: s32,
+    width: s32, height: s32, angle: s32, mirror: s32, output: OutputBuffer,
+    out_width: s32, out_height: s32, token: *Cancellation, modified: *bool) -> DecodeError {
+    for y: 0..height - 1 {
+        error := CancellationError(token)
+        if error.code != DecodeOK { return error }
+        for x: 0..width - 1 {
+            dx := x; dy := y
+            if angle == 1 { dx = y; dy = width - 1 - x }
+            else if angle == 2 { dx = width - 1 - x; dy = height - 1 - y }
+            else if angle == 3 { dx = height - 1 - y; dy = x }
+            if mirror == 0 { dy = out_height - 1 - dy }
+            else if mirror == 1 { dx = out_width - 1 - dx }
+            from := (cast(s64)(y + y0) * source_width + x + x0) * 4
+            to := cast(s64)dy * output.stride + dx * 4
+            modified.* = true
+            for channel: 0..3 { output.data[to + channel] = source[from + channel] }
+        }
+    }
+    return Error(DecodeOK)
+}

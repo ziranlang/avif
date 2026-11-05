@@ -1,0 +1,125 @@
+using Codec :: #import "image_codec/api"
+
+// Bounded, allocation-free ISO-BMFF framing. All offsets are absolute.
+Box :: struct { kind: u32; start: s64; payload: s64; end: s64; }
+BoxResult :: struct { box: Box; error: DecodeError; }
+#scope_file
+FourCC :: (a: u8, b: u8, c: u8, d: u8) -> u32 {
+    return (cast(u32)a << 24) | (cast(u32)b << 16) | (cast(u32)c << 8) | d
+}
+Big32 :: (input: BorrowedBytes, at: s64) -> u32 {
+    return FourCC(input.data[at], input.data[at + 1], input.data[at + 2], input.data[at + 3])
+}
+#scope_export
+// Prefix recognition only: preserve the frozen host's AvifSignature policy.
+// The complete ftyp must be present, but following boxes need not be present
+// or valid. Use ValidateContainer/Preflight for bounded container framing.
+HasSignature :: (input: BorrowedBytes) -> bool {
+    if input.data.count < 16 || Big32(input, 4) != 0x66747970 { return false }
+    size := cast(s64)Big32(input, 0)
+    if size < 16 || size > input.data.count || size > 4096 { return false }
+    brand := Big32(input, 8)
+    if brand == 0x61766966 || brand == 0x61766973 { return true }
+    at: s64 = 16
+    while at + 4 <= size {
+        brand = Big32(input, at)
+        if brand == 0x61766966 || brand == 0x61766973 { return true }
+        at += 4
+    }
+    return false
+}
+ReadBox :: (input: BorrowedBytes, at: s64, end: s64) -> BoxResult {
+    result: BoxResult
+    if at < 0 || end < at || end > input.data.count { result.error = Error(InvalidInput, at); return result }
+    if end - at < 8 { result.error = Error(TruncatedInput, at); return result }
+    size := cast(u64)Big32(input, at)
+    header: s64 = 8
+    if size == 1 {
+        if end - at < 16 { result.error = Error(TruncatedInput, at); return result }
+        size = (cast(u64)Big32(input, at + 8) << 32) | cast(u64)Big32(input, at + 12)
+        header = 16
+    } else if size == 0 { size = cast(u64)(end - at) }
+    if size < cast(u64)header { result.error = Error(MalformedInput, at); return result }
+    if size > cast(u64)(end - at) { result.error = Error(TruncatedInput, at); return result }
+    result.box = Box.{Big32(input, at + 4), at, at + header, at + cast(s64)size}
+    return result
+}
+// Signature policy matches the existing bridge: first box ftyp, bounded to
+// 4096 bytes, accepting major or compatible avif/avis brands.
+ValidateContainer :: (input: BorrowedBytes) -> DecodeError {
+    first := ReadBox(input, 0, input.data.count)
+    if first.error.code != DecodeOK { return first.error }
+    ftyp := FourCC(#char "f", #char "t", #char "y", #char "p")
+    avif := FourCC(#char "a", #char "v", #char "i", #char "f")
+    avis := FourCC(#char "a", #char "v", #char "i", #char "s")
+    if first.box.kind != ftyp || first.box.payload != 8 { return Error(MalformedInput, 0) }
+    if first.box.end < 16 || first.box.end > 4096 || (first.box.end - 16) % 4 != 0 { return Error(MalformedInput, 0) }
+    brand := Big32(input, 8)
+    found := brand == avif || brand == avis
+    at: s64 = 16
+    while at < first.box.end {
+        brand = Big32(input, at)
+        if brand == avif || brand == avis { found = true }
+        at += 4
+    }
+    if !found { return Error(UnsupportedCapability, 8) }
+    at = first.box.end
+    boxes: s32 = 1
+    while at < input.data.count {
+        if boxes >= 4096 { return Error(LimitExceeded, at) }
+        next := ReadBox(input, at, input.data.count)
+        if next.error.code != DecodeOK { return next.error }
+        at = next.box.end
+        boxes += 1
+    }
+    return Error(DecodeOK)
+}
+
+#scope_file
+ScanState :: struct { boxes: s32; metadata: s64; }
+Scan :: (input: BorrowedBytes, begin: s64, end: s64, depth: s32, state: *ScanState, limits: DecodeLimits) -> DecodeError {
+    if depth > 16 { return Error(LimitExceeded, begin) }
+    at := begin
+    while at < end {
+        if state.boxes >= 4096 { return Error(LimitExceeded, at) }
+        read := ReadBox(input, at, end)
+        if read.error.code != DecodeOK { return read.error }
+        box := read.box
+        state.boxes += 1
+        // meta is a FullBox. Other listed boxes contain only child boxes.
+        nested := box.kind == 0x6d657461 || box.kind == 0x69707270 || box.kind == 0x6970636f ||
+            box.kind == 0x6d6f6f76 || box.kind == 0x7472616b || box.kind == 0x6d646961 ||
+            box.kind == 0x6d696e66 || box.kind == 0x7374626c || box.kind == 0x65647473
+        if nested {
+            skip: s64 = ifx box.kind == 0x6d657461 then 4 else 0
+            if box.end - box.payload < skip { return Error(TruncatedInput, box.payload) }
+            error := Scan(input, box.payload + skip, box.end, depth + 1, state, limits)
+            if error.code != DecodeOK { return error }
+        } else if box.kind != 0x6d646174 && box.kind != 0x69646174 {
+            bytes := box.end - box.payload
+            if bytes > limits.max_metadata_bytes - state.metadata { return Error(LimitExceeded, at) }
+            state.metadata += bytes
+        }
+        if box.kind == 0x69737065 { // ispe FullBox
+            if box.end - box.payload != 12 || Big32(input, box.payload) != 0 { return Error(MalformedInput, box.payload) }
+            w := Big32(input, box.payload + 4); h := Big32(input, box.payload + 8)
+            if w == 0 || h == 0 { return Error(MalformedInput, box.payload + 4) }
+            if w > 32768 || h > 32768 || cast(u64)w * h > 67108864 { return Error(LimitExceeded, box.payload + 4) }
+            error := ValidateDimensions(cast(s32)w, cast(s32)h, limits)
+            if error.code != DecodeOK { return Error(error.code, box.payload + 4) }
+        }
+        at = box.end
+    }
+    return Error(DecodeOK)
+}
+#scope_export
+// Conservative container metadata scan before native allocation. No item graph
+// interpretation or OBU extraction is claimed by this initial A-01 slice.
+Preflight :: (input: BorrowedBytes, limits: DecodeLimits) -> DecodeError {
+    error := ValidateLimits(limits)
+    if error.code != DecodeOK { return error }
+    error = ValidateInputSize(input.data.count, limits)
+    if error.code != DecodeOK { return error }
+    state: ScanState
+    return Scan(input, 0, input.data.count, 0, *state, limits)
+}

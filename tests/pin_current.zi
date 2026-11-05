@@ -1,0 +1,24 @@
+// One-time golden capture from the read-only Kryon working-copy baseline.
+// Not part of the package or ordinary test imports; see fixtures/README.md.
+#import "avif_image"
+#import "std/mapped_file_linux"
+#import "avif_decode"
+#import "std/file_linux"
+#import "std/byte_text_linux"
+#program_export
+main :: (argc: s32, argv: **u8) -> s32 {
+    if argc != 3 { return 2 }
+    file := MapPrivate(TextFromCString(argv[1]))
+    if !file.valid { return 11 }
+    defer { unused UnmapFile(file) }
+    w: s32; h: s32
+    pixels := AvifImageDecode(TextFromBytes(MappedBytes(file)), *w, *h)
+    if pixels == null { return 4 }
+    defer { AvifFree(pixels) }
+    output := OpenReplace(TextFromCString(argv[2]))
+    if !output.valid { return 11 }
+    n := cast(s64)w * h * 4
+    wrote := Write(output, BytesFromPointer(pixels, cast(u64)n))
+    closed := CloseFile(output)
+    return ifx wrote == n && closed then 0 else 11
+}

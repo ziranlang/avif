@@ -1,0 +1,35 @@
+using Codec :: #import "image_codec/api"
+
+// No native structs or pointers cross this boundary. The initial engine owns
+// container parsing internally; an OBU/plane engine is a separate capability.
+EngineCapabilities :: struct {
+    container_bridge: bool
+    obu_planes: bool
+    strict_rgba8: bool
+    fast_color: bool
+    hdr: bool
+    interruptible: bool
+    hard_scratch_limit: bool
+    max_threads: s32
+}
+ContainerDecode :: #type (input: BorrowedBytes, options: *DecodeOptions) -> DecodeResult;
+Av1Engine :: struct { name: string; capabilities: EngineCapabilities; decode_container: ContainerDecode; }
+
+DecodeWithEngine :: (engine: Av1Engine, input: BorrowedBytes, options: *DecodeOptions) -> DecodeResult {
+    error := ValidateOptions(options)
+    if error.code != DecodeOK { return DecodeFailure(error) }
+    error = ValidateInputSize(input.data.count, options.limits)
+    if error.code != DecodeOK { return DecodeFailure(error) }
+    if !engine.capabilities.container_bridge || !engine.capabilities.strict_rgba8 ||
+       engine.capabilities.max_threads != 1 || engine.decode_container == null ||
+       options.color_mode != StrictColor { return DecodeFailure(Error(UnsupportedCapability)) }
+    error = ValidateDecodedFrames(1, options.limits)
+    if error.code != DecodeOK { return DecodeFailure(error) }
+    if options.workers != null {
+        error = AcquireWorker(options.workers, options.cancellation)
+        if error.code != DecodeOK { return DecodeFailure(error) }
+        defer { unused ReleaseWorker(options.workers) }
+        return engine.decode_container(input, options)
+    }
+    return engine.decode_container(input, options)
+}

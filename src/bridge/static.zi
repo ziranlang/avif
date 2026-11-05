@@ -1,0 +1,22 @@
+using Bridge :: #import "bridge"
+avif_native :: #system_library "avif";
+Version :: () -> *u8 #foreign avif_native "avifVersion";
+Create :: () -> *RawDecoder #foreign avif_native "avifDecoderCreate";
+Destroy :: (decoder: *RawDecoder) #foreign avif_native "avifDecoderDestroy";
+Memory :: (decoder: *RawDecoder, data: *u8, size: usize) -> s32 #foreign avif_native "avifDecoderSetIOMemory";
+Parse :: (decoder: *RawDecoder) -> s32 #foreign avif_native "avifDecoderParse";
+Next :: (decoder: *RawDecoder) -> s32 #foreign avif_native "avifDecoderNextImage";
+Defaults :: (rgb: *RawRGB, image: *RawImage) #foreign avif_native "avifRGBImageSetDefaults";
+Convert :: (image: *RawImage, rgb: *RawRGB) -> s32 #foreign avif_native "avifImageYUVToRGB";
+Crop :: (crop: *RawCrop, aperture: *u32, width: u32, height: u32, format: s32, diagnostics: *void) -> s32 #foreign avif_native "avifCropRectConvertCleanApertureBox";
+
+WrapCreate :: () -> *RawDecoder { return Create() }
+WrapDestroy :: (decoder: *RawDecoder) { Destroy(decoder) }
+WrapMemory :: (decoder: *RawDecoder, data: *u8, size: usize) -> s32 { return Memory(decoder, data, size) }
+WrapParse :: (decoder: *RawDecoder) -> s32 { return Parse(decoder) }
+WrapNext :: (decoder: *RawDecoder) -> s32 { return Next(decoder) }
+WrapDefaults :: (rgb: *RawRGB, image: *RawImage) { Defaults(rgb, image) }
+WrapConvert :: (image: *RawImage, rgb: *RawRGB) -> s32 { return Convert(image, rgb) }
+WrapCrop :: (crop: *RawCrop, aperture: *u32, width: u32, height: u32, format: s32, diagnostics: *void) -> s32 { return Crop(crop, aperture, width, height, format, diagnostics) }
+WrapVersion :: () -> *u8 { return Version() }
+StaticAPI :: () -> AvifAPI { return AvifAPI.{WrapVersion, WrapCreate, WrapDestroy, WrapMemory, WrapParse, WrapNext, WrapDefaults, WrapConvert, WrapCrop} }

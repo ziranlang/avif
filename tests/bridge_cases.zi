@@ -1,0 +1,86 @@
+#import "avif/bridge"
+#import "std/mapped_file_linux"
+#import "std/byte_text_linux"
+#import "std/text_tools"
+WrongVersion :: () -> *u8 {
+    text := "1.4.2"
+    descriptor := cast(*TextDescriptor)*text
+    return descriptor.data
+}
+created: s32;
+UnexpectedCreate :: () -> *RawDecoder { created += 1; return null }
+CheckBridgeCase :: (api: AvifAPI, directory: string, name: string) -> s32 {
+    parts: [4]string = .[directory, "/", name, ".avif"]
+    input := MapPrivate(TextJoin(parts[:], ""))
+    if !input.valid { return 5 }
+    defer { unused UnmapFile(input) }
+    parts[3] = ".strict.rgba"
+    golden := MapPrivate(TextJoin(parts[:], ""))
+    if !golden.valid { return 6 }
+    defer { unused UnmapFile(golden) }
+    options := DefaultOptions(); budget := NewWorkerBudget(options.limits); options.workers = *budget
+    probe := BridgeProbe(api, BorrowBytes(MappedBytes(input)), options)
+    if !probe.is_ok { return 15 }
+    result := DecodeWithAPI(api, BorrowBytes(MappedBytes(input)), options)
+    if !result.is_ok || cast(u64)result.image.pixels.count != golden.length { return 7 }
+    if probe.metadata.width != result.metadata.width || probe.metadata.height != result.metadata.height || probe.metadata.has_alpha != result.metadata.has_alpha || probe.metadata.frame_count != result.metadata.frame_count { return 16 }
+    expected := MappedBytes(golden)
+    for i: 0..expected.count - 1 { if result.image.pixels[i] != expected[i] { return 8 } }
+    storage: [512]u8
+    for i: 0..511 { storage[i] = 77 }
+    stride := cast(s64)result.image.width * 4 + 3
+    span := stride * (result.image.height - 1) + cast(s64)result.image.width * 4
+    output := OutputBuffer.{storage[:span], stride}
+    into := DecodeIntoWithAPI(api, BorrowBytes(MappedBytes(input)), output, options)
+    if !into.is_ok || !into.output_may_be_modified || into.metadata.width != result.image.width || budget.active_workers != 0 || budget.working_bytes != 0 { print("% Into error %\n", name, into.error.code); return 9 }
+    for y: 0..result.image.height - 1 {
+        for x: 0..cast(s64)result.image.width * 4 - 1 { if storage[y * stride + x] != expected[(cast(s64)y * result.image.width * 4) + x] { return 10 } }
+        for pad: cast(s64)result.image.width * 4..stride - 1 { if storage[y * stride + pad] != 77 { return 11 } }
+    }
+    for i: span..511 { if storage[i] != 77 { return 21 } }
+    output.stride = 1
+    invalid := DecodeIntoWithAPI(api, BorrowBytes(MappedBytes(input)), output, options)
+    if invalid.is_ok || invalid.output_may_be_modified || invalid.error.code != InvalidInput { return 12 }
+    output.stride = stride; output.data = storage[:1]
+    small := DecodeIntoWithAPI(api, BorrowBytes(MappedBytes(input)), output, options)
+    if small.is_ok || small.output_may_be_modified || small.error.code != OutputTooSmall { return 13 }
+    if name == "rgba8" {
+        // Actual identity conversion needs no full-frame working reservation.
+        options.limits.max_working_bytes = 1; budget.max_working_bytes = 1
+        output.data = storage[:span]
+        identity := DecodeIntoWithAPI(api, BorrowBytes(MappedBytes(input)), output, options)
+        if !identity.is_ok || !identity.output_may_be_modified || budget.working_bytes != 0 || budget.active_workers != 0 { return 22 }
+        options.limits.max_working_bytes = 536870912; budget.max_working_bytes = 536870912
+        token: Cancellation; token.requested = true; options.cancellation = *token
+        cancelled := DecodeIntoWithAPI(api, BorrowBytes(MappedBytes(input)), output, options)
+        if cancelled.is_ok || cancelled.output_may_be_modified || cancelled.error.code != DecodeCancelled || cancelled.metadata.width != 0 || budget.active_workers != 0 { return 23 }
+        options.cancellation = null
+        data := MappedBytes(input)
+        found: s64 = -1
+        for at: 0..data.count - 11 {
+            if data[at] == 110 && data[at + 1] == 99 && data[at + 2] == 108 && data[at + 3] == 120 { found = at; break }
+        }
+        if found < 0 { return 17 }
+        old_high := data[found + 6]; old_low := data[found + 7]
+        for transfer: 16..18 {
+            if transfer == 17 { continue }
+            data[found + 6] = 0; data[found + 7] = cast(u8)transfer
+            hdr := DecodeWithAPI(api, BorrowBytes(data), options)
+            if hdr.is_ok || hdr.error.code != UnsupportedCapability || budget.active_workers != 0 { return 18 }
+        }
+        data[found + 6] = old_high; data[found + 7] = old_low
+        options.limits.max_input_bytes = 1
+        limited := DecodeWithAPI(api, BorrowBytes(data), options)
+        if limited.is_ok || limited.error.code != LimitExceeded { return 19 }
+        options.limits.max_input_bytes = 268435456
+        options.limits.max_metadata_bytes = 0
+        metadata_limit := DecodeWithAPI(api, BorrowBytes(data), options)
+        if metadata_limit.is_ok || metadata_limit.error.code != LimitExceeded || budget.active_workers != 0 { return 20 }
+        options.limits.max_metadata_bytes = 1048576
+    }
+    api.version = WrongVersion
+    api.create = UnexpectedCreate
+    wrong := DecodeWithAPI(api, BorrowBytes(MappedBytes(input)), options)
+    if wrong.is_ok || wrong.error.code != UnsupportedCapability || budget.active_workers != 0 || created != 0 { return 14 }
+    return 0
+}

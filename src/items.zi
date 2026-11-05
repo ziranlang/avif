@@ -1,0 +1,134 @@
+using Boxes :: #import "boxes"
+Extent :: struct { offset: s64; count: s64; }
+ImageItem :: struct {
+    id: u32; kind: u32; has_info: bool; has_location: bool
+    construction: s32; extent_count: s32; extents: [16]Extent
+    width: s32; height: s32; depth: s32
+    has_config: bool; alpha: bool; premultiplied: bool
+    crop: [8]u32; has_crop: bool; rotation: s32; mirror: s32; has_rotation: bool; has_mirror: bool
+}
+ItemReference :: struct { kind: u32; from: u32; to: u32; }
+ItemProperty :: struct { box: Box; }
+PropertyAssociation :: struct { item: u32; property: u32; essential: bool; }
+AvifContainer :: struct {
+    primary: u32; alpha: u32
+    item_count: s32; items: [128]ImageItem
+    property_count: s32; properties: [256]ItemProperty
+    association_count: s32; associations: [1024]PropertyAssociation
+    reference_count: s32; references: [512]ItemReference
+    idat: Box; error: DecodeError
+}
+FindItem :: (container: *AvifContainer, id: u32) -> s32 {
+    for i: cast(s32)0..container.item_count - 1 { if container.items[i].id == id { return i } }
+    return -1
+}
+EnsureItem :: (container: *AvifContainer, id: u32, at: s64) -> s32 {
+    if id == 0 { container.error = Error(MalformedInput, at); return -1 }
+    index := FindItem(container, id)
+    if index >= 0 { return index }
+    if container.item_count >= 128 { container.error = Error(LimitExceeded, at); return -1 }
+    index = container.item_count; container.item_count += 1
+    container.items[index].id = id
+    container.items[index].mirror = -1
+    return index
+}
+ParseInfo :: (input: BorrowedBytes, box: Box, container: *AvifContainer) -> DecodeError {
+    reader := OpenReader(input, box)
+    full := Take(*reader, 4); version := full >> 24
+    if (full & 0xffffff) != 0 || version > 1 { return Error(UnsupportedCapability, box.payload) }
+    count := Take(*reader, ifx version == 0 then 2 else 4)
+    if count == 0 { return Error(MalformedInput, reader.at) }
+    if count > 128 { return Error(LimitExceeded, reader.at) }
+    for i: cast(s32)0..cast(s32)count - 1 {
+        next := ReadBox(input, reader.at, box.end)
+        if next.error.code != DecodeOK { return next.error }
+        if next.box.kind != 0x696e6665 { return Error(MalformedInput, reader.at) }
+        entry := OpenReader(input, next.box)
+        flags := Take(*entry, 4); v := flags >> 24
+        if (flags & 0xfffffe) != 0 || (v != 2 && v != 3) { return Error(UnsupportedCapability, entry.at - 4) }
+        id := cast(u32)Take(*entry, ifx v == 2 then 2 else 4)
+        protection := Take(*entry, 2); kind := cast(u32)Take(*entry, 4)
+        if entry.error.code != DecodeOK { return entry.error }
+        if protection != 0 { return Error(UnsupportedCapability, entry.at) }
+        index := EnsureItem(container, id, next.box.start)
+        if index < 0 { return container.error }
+        if container.items[index].has_info { return Error(MalformedInput, next.box.start) }
+        // infe must contain a NUL-terminated item_name, even if empty.
+        terminated := false
+        while entry.at < entry.end {
+            if Take(*entry, 1) == 0 { terminated = true; break }
+        }
+        if !terminated { return Error(TruncatedInput, entry.at) }
+        container.items[index].has_info = true; container.items[index].kind = kind
+        reader.at = next.box.end
+    }
+    return Finish(*reader)
+}
+ParseLocations :: (input: BorrowedBytes, box: Box, container: *AvifContainer) -> DecodeError {
+    reader := OpenReader(input, box)
+    full := Take(*reader, 4); version := full >> 24
+    if (full & 0xffffff) != 0 || version > 2 { return Error(UnsupportedCapability, box.payload) }
+    sizes := Take(*reader, 1); sizes2 := Take(*reader, 1)
+    offset_size := cast(s32)(sizes >> 4); length_size := cast(s32)(sizes & 15)
+    base_size := cast(s32)(sizes2 >> 4); index_size := cast(s32)(sizes2 & 15)
+    if offset_size > 8 || length_size > 8 || base_size > 8 || index_size > 8 || (version == 0 && index_size != 0) { return Error(UnsupportedCapability, reader.at - 2) }
+    count := Take(*reader, ifx version < 2 then 2 else 4)
+    if count == 0 { return Error(MalformedInput, reader.at) }
+    if count > 128 { return Error(LimitExceeded, reader.at) }
+    for i: cast(s32)0..cast(s32)count - 1 {
+        id := cast(u32)Take(*reader, ifx version < 2 then 2 else 4)
+        construction: u64
+        if version != 0 { construction = Take(*reader, 2) }
+        data_reference := Take(*reader, 2); base := Take(*reader, base_size)
+        extents := Take(*reader, 2)
+        if reader.error.code != DecodeOK { return reader.error }
+        if (construction & 0xfff0) != 0 { return Error(MalformedInput, reader.at) }
+        if construction > 1 || data_reference != 0 || length_size == 0 { return Error(UnsupportedCapability, reader.at) }
+        if extents == 0 { return Error(MalformedInput, reader.at) }
+        if base > 9223372036854775807 || extents > 16 { return Error(LimitExceeded, reader.at) }
+        index := EnsureItem(container, id, reader.at)
+        if index < 0 { return container.error }
+        if container.items[index].has_location { return Error(MalformedInput, reader.at) }
+        container.items[index].has_location = true
+        container.items[index].construction = cast(s32)construction
+        container.items[index].extent_count = cast(s32)extents
+        for j: cast(s32)0..cast(s32)extents - 1 {
+            if version != 0 && index_size > 0 {
+                if Take(*reader, index_size) != 0 { return Error(UnsupportedCapability, reader.at) }
+            }
+            offset := Take(*reader, offset_size); size := Take(*reader, length_size)
+            if reader.error.code != DecodeOK { return reader.error }
+            if offset > 9223372036854775807 - base || size > 9223372036854775807 { return Error(LimitExceeded, reader.at) }
+            container.items[index].extents[j] = Extent.{cast(s64)(base + offset), cast(s64)size}
+        }
+    }
+    return Finish(*reader)
+}
+ParseReferences :: (input: BorrowedBytes, box: Box, container: *AvifContainer) -> DecodeError {
+    reader := OpenReader(input, box)
+    full := Take(*reader, 4); version := full >> 24
+    if (full & 0xffffff) != 0 || version > 1 { return Error(UnsupportedCapability, box.payload) }
+    while reader.at < reader.end {
+        child := ReadBox(input, reader.at, reader.end)
+        if child.error.code != DecodeOK { return child.error }
+        entry := OpenReader(input, child.box)
+        from := cast(u32)Take(*entry, ifx version == 0 then 2 else 4)
+        count := Take(*entry, 2)
+        if count > cast(u64)(512 - container.reference_count) { return Error(LimitExceeded, entry.at) }
+        for i: cast(s32)0..cast(s32)count - 1 {
+            to := cast(u32)Take(*entry, ifx version == 0 then 2 else 4)
+            if from == 0 || to == 0 || from == to { return Error(MalformedInput, entry.at) }
+            // Duplicate edges are malformed rather than order-dependent.
+            for r: 0..container.reference_count - 1 {
+                ref := container.references[r]
+                if ref.kind == child.box.kind && ref.from == from && ref.to == to { return Error(MalformedInput, entry.at) }
+            }
+            container.references[container.reference_count] = ItemReference.{child.box.kind, from, to}
+            container.reference_count += 1
+        }
+        error := Finish(*entry)
+        if error.code != DecodeOK { return error }
+        reader.at = child.box.end
+    }
+    return Finish(*reader)
+}

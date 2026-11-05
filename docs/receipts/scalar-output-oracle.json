@@ -1,0 +1,67 @@
+{
+  "schema": 1,
+  "kind": "synthetic-planar-YUV-to-straight-RGBA8",
+  "oracle": {
+    "libavif": "1.3.0",
+    "source_pin": "1aadfad932c98c069a1204261b1856f81f3bc199",
+    "product_adapter_used": false,
+    "libyuv": false,
+    "threads": 1,
+    "source_sha256": "398cb8786c5c229bd0dc2b4bb187d95a5f03696c5c3ae7e17b587c4db50e085d",
+    "corpus_sha256": "8e57600f14405459e12525fe33e772f1156eba741629aa02e623952036d5b1eb"
+  },
+  "case_count": 486,
+  "dimensions": [
+    7,
+    5
+  ],
+  "depths": [
+    8,
+    10,
+    12
+  ],
+  "ranges": [
+    "full",
+    "limited"
+  ],
+  "color_matrices": [
+    0,
+    1,
+    5,
+    6,
+    9
+  ],
+  "monochrome_additional_matrices": [
+    2
+  ],
+  "sampling": [
+    "400",
+    "444",
+    "422",
+    "420"
+  ],
+  "chroma_filters": [
+    "nearest",
+    "centered bilinear"
+  ],
+  "alpha": [
+    "absent",
+    "straight",
+    "premultiplied"
+  ],
+  "output": "8-bit straight RGBA, padded stride and sentinels validated",
+  "backend_validation": [
+    "C source",
+    "C saved IR",
+    "Go source CGO_ENABLED=0",
+    "Go saved IR CGO_ENABLED=0",
+    "directVM source",
+    "directVM saved IR"
+  ],
+  "last_completed_receipt": "65aafe7ae17160dc63b7a536836861cf7b87",
+  "notes": [
+    "Native bridge/default engine and existing strict goldens unchanged",
+    "No authored AVIF grid-container, ICC, HDR or general conformance claim",
+    "Grid output kernel validated with independent clipped synthetic cells"
+  ]
+}

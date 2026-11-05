@@ -1,0 +1,32 @@
+using BMFF :: #import "bmff"
+Reader :: struct { input: BorrowedBytes; at: s64; end: s64; error: DecodeError; }
+OpenReader :: (input: BorrowedBytes, box: Box) -> Reader { return Reader.{input, box.payload, box.end, Error(DecodeOK)} }
+Take :: (reader: *Reader, count: s32) -> u64 {
+    if reader.error.code != DecodeOK { return 0 }
+    if count < 0 || count > 8 { reader.error = Error(UnsupportedCapability, reader.at); return 0 }
+    if reader.at < 0 || reader.end > reader.input.data.count || reader.at > reader.end || count > reader.end - reader.at { reader.error = Error(TruncatedInput, reader.at); return 0 }
+    value: u64
+    for i: 0..count - 1 { value = (value << 8) | cast(u64)reader.input.data[reader.at]; reader.at += 1 }
+    return value
+}
+Finish :: (reader: *Reader) -> DecodeError {
+    if reader.error.code != DecodeOK { return reader.error }
+    if reader.at != reader.end { return Error(MalformedInput, reader.at) }
+    return Error(DecodeOK)
+}
+FindBox :: (input: BorrowedBytes, begin: s64, end: s64, kind: u32) -> BoxResult {
+    result: BoxResult
+    at := begin
+    count: s32
+    while at < end {
+        if count >= 4096 { result.error = Error(LimitExceeded, at); return result }
+        next := ReadBox(input, at, end)
+        if next.error.code != DecodeOK { return next }
+        if next.box.kind == kind {
+            if result.box.end != 0 { result.error = Error(MalformedInput, at); return result }
+            result.box = next.box
+        }
+        at = next.box.end; count += 1
+    }
+    return result
+}

@@ -1,0 +1,44 @@
+[package]
+name = "avif"
+module_roots = ["src", "src/bridge"]
+entry = "tools/avif.zi"
+
+[toolchain]
+git = "https://github.com/ziranlang/ziran.git"
+ref = "1d616e3a1761dd4e4a1c5a960c165d30ba16da29"
+
+[exports]
+api = "src/api.zi"
+engine = "src/engine.zi"
+bmff = "src/bmff.zi"
+bridge = "src/bridge.zi"
+
+[tool]
+project = "build/bin/avif-native"
+
+[artifacts.native]
+inputs = ["Makefile", "native/provider.py", "native/CMakeLists.txt", "native/ZiranAvif.cmake", "native/requirements.txt"]
+outputs = ["lib/libavif_bridge.so", "lib/libavif.a", "lib/libaom.a", "resources/LICENSE-libavif", "resources/LICENSE-libaom", "resources/PATENTS-libaom", "provenance.json", "link.txt"]
+
+[dependencies.libavif]
+git = "https://github.com/AOMediaCodec/libavif.git"
+ref = "1aadfad932c98c069a1204261b1856f81f3bc199"
+source = true
+
+[dependencies.libaom]
+git = "https://aomedia.googlesource.com/aom"
+ref = "d772e334cc724105040382a977ebb10dfd393293"
+source = true
+
+[dependencies.image_codec]
+git = "https://github.com/ziranlang/image-codec.git"
+ref = "a8767d78d0c08d5b1c1fc0bab6fcafdc7a6da930"
+
+[dependencies.dav1d]
+git = "https://github.com/videolan/dav1d.git"
+ref = "54706fc6bc0cdecab7e9593974a4039cc038fca7"
+source = true
+
+[artifacts.native-dav1d]
+inputs = ["Makefile", "native/provider.py", "native/CMakeLists.txt", "native/ZiranAvif.cmake", "native/requirements.txt"]
+outputs = ["lib/libavif_bridge.so", "lib/libavif.a", "lib/libaom.a", "lib/libdav1d.a", "resources/LICENSE-libavif", "resources/LICENSE-libaom", "resources/PATENTS-libaom", "resources/LICENSE-dav1d", "provenance.json", "link.txt"]

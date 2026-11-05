@@ -1,0 +1,135 @@
+using Output :: #import "output"
+#import "alpha"
+NearestChroma :: 0;
+BilinearChroma :: 1;
+ColorSpec :: struct {
+    depth: s32; full_range: bool; matrix: s32
+    subsampling_x: s32; subsampling_y: s32; monochrome: bool; chroma_filter: s32; transfer_characteristics: s32
+}
+PlanarImage :: struct { y: PlaneView; u: PlaneView; v: PlaneView; alpha: PlaneView; has_alpha: bool; source_premultiplied: bool; color: ColorSpec; }
+#scope_file
+Sample :: (plane: PlaneView, x: s32, y: s32) -> s32 {
+    at := cast(s64)y * plane.stride + cast(s64)x * plane.sample_bytes
+    value := cast(s32)plane.data[at]
+    if plane.sample_bytes == 2 { value |= cast(s32)plane.data[at + 1] << 8 }
+    return value
+}
+ValidateSamples :: (plane: PlaneView, width: s32, height: s32, bytes: s32, maximum: s32, options: *DecodeOptions) -> DecodeError {
+    error := ValidatePlane(plane, options.limits)
+    if error.code != DecodeOK { return error }
+    if plane.width != width || plane.height != height || plane.sample_bytes != bytes { return Error(InvalidInput) }
+    for y: 0..height - 1 {
+        error = CancellationError(options.cancellation)
+        if error.code != DecodeOK { return error }
+        for x: 0..width - 1 { if Sample(plane, x, y) > maximum { return Error(MalformedInput) } }
+    }
+    return Error(DecodeOK)
+}
+NormalizedChroma :: (plane: PlaneView, x: s32, y: s32, spec: ColorSpec, bias: float32, span: float32) -> float32 {
+    cx := x >> spec.subsampling_x; cy := y >> spec.subsampling_y
+    first := (cast(float32)Sample(plane, cx, cy) - bias) / span
+    if spec.chroma_filter == NearestChroma || (spec.subsampling_x == 0 && spec.subsampling_y == 0) { return first }
+    ax := cx; ay := cy
+    if spec.subsampling_x != 0 {
+        if (x & 1) != 0 { if cx + 1 < plane.width { ax = cx + 1 } }
+        else if cx > 0 { ax = cx - 1 }
+    }
+    if spec.subsampling_y != 0 {
+        if (y & 1) != 0 { if cy + 1 < plane.height { ay = cy + 1 } }
+        else if cy > 0 { ay = cy - 1 }
+    }
+    adjacent_x := (cast(float32)Sample(plane, ax, cy) - bias) / span
+    adjacent_y := (cast(float32)Sample(plane, cx, ay) - bias) / span
+    diagonal := (cast(float32)Sample(plane, ax, ay) - bias) / span
+    return first * cast(float32)0.5625 + adjacent_x * cast(float32)0.1875 + adjacent_y * cast(float32)0.1875 + diagonal * cast(float32)0.0625
+}
+#scope_export
+// Internal scalar subset: CICP identity, BT.709, BT.601 (5/6), BT.2020 NCL;
+// 400/444/422/420, explicit nearest or centered bilinear chroma, SDR RGBA8.
+// Source alpha is full-range at source depth. No transfer/ICC/HDR conversion.
+ConvertRGBA8Into :: (source: PlanarImage, output: OutputBuffer, options: DecodeOptions) -> PixelWriteResult {
+    error := ValidateOptions(*options)
+    if error.code != DecodeOK { return PixelFailure(error) }
+    spec := source.color
+    if options.color_mode != StrictColor || spec.transfer_characteristics == 16 || spec.transfer_characteristics == 18 ||
+       (spec.depth != 8 && spec.depth != 10 && spec.depth != 12) ||
+       (spec.matrix != 0 && spec.matrix != 1 && spec.matrix != 5 && spec.matrix != 6 && spec.matrix != 9 && !(spec.monochrome && spec.matrix == 2)) ||
+       spec.subsampling_x < 0 || spec.subsampling_x > 1 || spec.subsampling_y < 0 || spec.subsampling_y > spec.subsampling_x ||
+       (spec.matrix == 0 && !spec.monochrome && (spec.subsampling_x != 0 || spec.subsampling_y != 0)) ||
+       (spec.chroma_filter != NearestChroma && spec.chroma_filter != BilinearChroma) {
+        return PixelFailure(Error(UnsupportedCapability))
+    }
+    if source.source_premultiplied && !source.has_alpha { return PixelFailure(Error(InvalidInput)) }
+    acquired := false
+    if options.workers != null {
+        error = AcquireWorker(options.workers, options.cancellation)
+        if error.code != DecodeOK { return PixelFailure(error) }
+        acquired = true
+    }
+    defer { if acquired { unused ReleaseWorker(options.workers) } }
+    bytes: s32 = ifx spec.depth == 8 then 1 else 2
+    maximum: s32 = (1 << spec.depth) - 1
+    error = ValidateSamples(source.y, source.y.width, source.y.height, bytes, maximum, *options)
+    if error.code != DecodeOK { return PixelFailure(error) }
+    if !spec.monochrome {
+        width := cast(s32)((cast(s64)source.y.width + spec.subsampling_x) >> spec.subsampling_x)
+        height := cast(s32)((cast(s64)source.y.height + spec.subsampling_y) >> spec.subsampling_y)
+        error = ValidateSamples(source.u, width, height, bytes, maximum, *options)
+        if error.code == DecodeOK { error = ValidateSamples(source.v, width, height, bytes, maximum, *options) }
+        if error.code != DecodeOK { return PixelFailure(error) }
+    }
+    if source.has_alpha {
+        error = ValidateSamples(source.alpha, source.y.width, source.y.height, bytes, maximum, *options)
+        if error.code != DecodeOK { return PixelFailure(error) }
+    }
+    error = ValidateOutput(output, source.y.width, source.y.height, options.limits)
+    if error.code != DecodeOK { return PixelFailure(error) }
+    if ByteRangesOverlap(source.y.data, output.data) ||
+       (!spec.monochrome && (ByteRangesOverlap(source.u.data, output.data) || ByteRangesOverlap(source.v.data, output.data))) ||
+       (source.has_alpha && ByteRangesOverlap(source.alpha.data, output.data)) { return PixelFailure(Error(InvalidInput)) }
+    bias_y: float32 = ifx spec.full_range then 0 else cast(float32)(16 << (spec.depth - 8))
+    span_y: float32 = ifx spec.full_range then cast(float32)maximum else cast(float32)(219 << (spec.depth - 8))
+    bias_uv: float32 = ifx spec.matrix == 0 then bias_y else cast(float32)(1 << (spec.depth - 1))
+    span_uv: float32 = ifx spec.matrix == 0 then span_y else ifx spec.full_range then cast(float32)maximum else cast(float32)(224 << (spec.depth - 8))
+    kr: float32 = cast(float32)0.299; kb: float32 = cast(float32)0.114
+    if spec.matrix == 1 { kr = cast(float32)0.2126; kb = cast(float32)0.0722 }
+    else if spec.matrix == 9 { kr = cast(float32)0.2627; kb = cast(float32)0.0593 }
+    kg: float32 = 1 - kr - kb
+    result: PixelWriteResult
+    for y: 0..source.y.height - 1 {
+        error = CancellationError(options.cancellation)
+        if error.code != DecodeOK { result.error = error; return result }
+        for x: 0..source.y.width - 1 {
+            luma := (cast(float32)Sample(source.y, x, y) - bias_y) / span_y
+            r := luma; g := luma; b := luma
+            if !spec.monochrome {
+                u := NormalizedChroma(source.u, x, y, spec, bias_uv, span_uv)
+                v := NormalizedChroma(source.v, x, y, spec, bias_uv, span_uv)
+                if spec.matrix == 0 { r = v; b = u }
+                else {
+                    r = luma + (2 * (1 - kr)) * v
+                    b = luma + (2 * (1 - kb)) * u
+                    g = luma - ((2 * ((kr * (1 - kr) * v) + (kb * (1 - kb) * u))) / kg)
+                }
+            }
+            alpha: float32 = 1
+            if source.has_alpha { alpha = cast(float32)Sample(source.alpha, x, y) / cast(float32)maximum }
+            // Match the pinned scalar libavif RGBA8 rounding boundary: its
+            // nearest/444 coefficient paths unpremultiply quantized RGBA8;
+            // identity fallback and bilinear subsampled paths do so in float.
+            float_alpha := (spec.matrix == 0 && (spec.monochrome || spec.depth != 8 || !spec.full_range)) ||
+                (!spec.monochrome && (spec.subsampling_x != 0 || spec.subsampling_y != 0) && spec.chroma_filter == BilinearChroma)
+            if source.source_premultiplied && float_alpha { r = StraightUnit(r, alpha); g = StraightUnit(g, alpha); b = StraightUnit(b, alpha) }
+            red := QuantizeRGBA8(r); green := QuantizeRGBA8(g); blue := QuantizeRGBA8(b); opacity := QuantizeRGBA8(alpha)
+            if source.source_premultiplied && !float_alpha {
+                red = StraightRGBA8(red, opacity); green = StraightRGBA8(green, opacity); blue = StraightRGBA8(blue, opacity)
+            }
+            at := cast(s64)y * output.stride + cast(s64)x * 4
+            result.output_may_be_modified = true
+            output.data[at] = red; output.data[at + 1] = green
+            output.data[at + 2] = blue; output.data[at + 3] = opacity
+        }
+    }
+    result.is_ok = true
+    return result
+}

@@ -1,0 +1,43 @@
+#import "avif/engine"
+FakeSuccess :: (input: BorrowedBytes, options: *DecodeOptions) -> DecodeResult {
+    unused input
+    metadata: ImageMetadata; metadata.width = 1; metadata.height = 1
+    metadata.source_bit_depth = 8; metadata.frame_count = 1
+    result := AllocateImage(metadata, options.limits, options.cancellation)
+    if result.is_ok { result.image.pixels[0] = 123; result.image.pixels[3] = 255 }
+    return result
+}
+FakeFailure :: (input: BorrowedBytes, options: *DecodeOptions) -> DecodeResult {
+    unused input; unused options
+    return DecodeFailure(Error(MalformedInput, 19))
+}
+#program_export
+main :: () -> s32 {
+    input: [1]u8
+    options := DefaultOptions()
+    budget := NewWorkerBudget(options.limits); options.workers = *budget
+    caps := EngineCapabilities.{true, false, true, false, false, false, false, 1}
+    engine := Av1Engine.{"fake", caps, FakeSuccess}
+    result := DecodeWithEngine(engine, BorrowBytes(input[:]), *options)
+    if !result.is_ok || result.image.pixels[0] != 123 || result.image.pixels[3] != 255 || budget.active_workers != 0 || budget.peak_workers != 1 { return 1 }
+    engine.decode_container = FakeFailure
+    failed := DecodeWithEngine(engine, BorrowBytes(input[:]), *options)
+    if failed.error.code != MalformedInput || failed.error.offset != 19 || budget.active_workers != 0 { return 2 }
+    options.color_mode = FastColor
+    fast := DecodeWithEngine(engine, BorrowBytes(input[:]), *options)
+    if fast.error.code != UnsupportedCapability || budget.active_workers != 0 { return 3 }
+    options.color_mode = StrictColor
+    token: Cancellation; Cancel(*token); options.cancellation = *token
+    cancelled := DecodeWithEngine(engine, BorrowBytes(input[:]), *options)
+    if cancelled.error.code != DecodeCancelled || budget.active_workers != 0 { return 4 }
+    options.cancellation = null
+    engine.capabilities.container_bridge = false
+    unavailable := DecodeWithEngine(engine, BorrowBytes(input[:]), *options)
+    if unavailable.error.code != UnsupportedCapability || budget.active_workers != 0 { return 5 }
+    engine.capabilities.container_bridge = true
+    missing_engine: Av1Engine
+    missing_engine.capabilities = caps
+    missing := DecodeWithEngine(missing_engine, BorrowBytes(input[:]), *options)
+    if missing.error.code != UnsupportedCapability || budget.active_workers != 0 { return 6 }
+    return 0
+}

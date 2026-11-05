@@ -1,0 +1,17 @@
+// Scalar straight-alpha helpers. Values passed here are finite unit samples
+// produced by validated integer planes, never arbitrary floating-point input.
+ClampUnit :: (value: float32) -> float32 {
+    if value <= 0 { return 0 }
+    if value >= 1 { return 1 }
+    return value
+}
+QuantizeRGBA8 :: (value: float32) -> u8 { return cast(u8)(ClampUnit(value) * 255 + cast(float32)0.5) }
+StraightUnit :: (value: float32, alpha: float32) -> float32 {
+    if alpha <= 0 { return 0 }
+    return ClampUnit(ClampUnit(value) / alpha)
+}
+StraightRGBA8 :: (value: u8, alpha: u8) -> u8 {
+    if alpha == 0 { return 0 }
+    straight := (cast(s32)value * 255 + cast(s32)alpha / 2) / alpha
+    return ifx straight > 255 then cast(u8)255 else cast(u8)straight
+}

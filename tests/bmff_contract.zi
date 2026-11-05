@@ -1,0 +1,85 @@
+#import "avif/bmff"
+#import, file "../src/transform.zi";
+#program_export
+main :: () -> s32 {
+    // Prefix recognition deliberately accepts a valid ftyp followed by
+    // incomplete data and the old host's non-aligned ftyp brand policy.
+    prefix: [25]u8 = .[0,0,0,20,102,116,121,112,109,105,102,49,0,0,0,0,97,118,105,102,0,0,0,9,0]
+    for length: 0..19 { if HasSignature(BorrowBytes(prefix[:length])) { return 20 } }
+    if !HasSignature(BorrowBytes(prefix[:20])) || !HasSignature(BorrowBytes(prefix[:])) { return 21 }
+    if ValidateContainer(BorrowBytes(prefix[:])).code != TruncatedInput { return 22 }
+    prefix[19] = 115
+    if !HasSignature(BorrowBytes(prefix[:20])) { return 23 }
+    prefix[19] = 120
+    if HasSignature(BorrowBytes(prefix[:20])) { return 24 }
+    prefix[8] = 97; prefix[9] = 118; prefix[10] = 105; prefix[11] = 102
+    prefix[3] = 17
+    if !HasSignature(BorrowBytes(prefix[:17])) || ValidateContainer(BorrowBytes(prefix[:17])).code != MalformedInput { return 25 }
+    prefix[3] = 1
+    if HasSignature(BorrowBytes(prefix[:])) { return 26 }
+    prefix[3] = 0
+    if HasSignature(BorrowBytes(prefix[:])) { return 27 }
+    prefix[3] = 16; prefix[4] = 0
+    if HasSignature(BorrowBytes(prefix[:])) { return 28 }
+    boundary: [4097]u8
+    boundary[2] = 16; boundary[4] = 102; boundary[5] = 116; boundary[6] = 121; boundary[7] = 112
+    boundary[8] = 97; boundary[9] = 118; boundary[10] = 105; boundary[11] = 102
+    if !HasSignature(BorrowBytes(boundary[:])) { return 29 }
+    boundary[3] = 1
+    if HasSignature(BorrowBytes(boundary[:])) { return 30 }
+    // 32-bit, 64-bit, extends-to-parent, undersized, truncated, overflow.
+    small: [8]u8 = .[0,0,0,8,102,114,101,101]
+    input := BorrowBytes(small[:])
+    box := ReadBox(input, 0, 8)
+    if box.error.code != DecodeOK || box.box.payload != 8 || box.box.end != 8 { return 1 }
+    small[3] = 0
+    zero := ReadBox(input, 0, 8)
+    if zero.error.code != DecodeOK || zero.box.end != 8 { return 2 }
+    small[3] = 7
+    short := ReadBox(input, 0, 8)
+    if short.error.code != MalformedInput || short.error.offset != 0 { return 3 }
+    small[3] = 9
+    truncated := ReadBox(input, 0, 8)
+    if truncated.error.code != TruncatedInput { return 4 }
+    extended: [16]u8 = .[0,0,0,1,102,114,101,101,0,0,0,0,0,0,0,16]
+    wide := ReadBox(BorrowBytes(extended[:]), 0, 16)
+    if wide.error.code != DecodeOK || wide.box.payload != 16 { return 5 }
+    extended[8] = 255
+    huge := ReadBox(BorrowBytes(extended[:]), 0, 16)
+    if huge.error.code != TruncatedInput { return 6 }
+    outside := ReadBox(input, -1, 8)
+    if outside.error.code != InvalidInput { return 7 }
+    // Known-container nesting is bounded at depth16, with no heap allocation.
+    tree: [144]u8
+    for i: 0..17 {
+        at := i * 8
+        size := 144 - at
+        tree[at] = cast(u8)(size >> 24); tree[at + 1] = cast(u8)(size >> 16)
+        tree[at + 2] = cast(u8)(size >> 8); tree[at + 3] = cast(u8)size
+        tree[at + 4] = 105; tree[at + 5] = 112; tree[at + 6] = 114; tree[at + 7] = 112
+    }
+    deep := Preflight(BorrowBytes(tree[:]), DefaultLimits())
+    if deep.code != LimitExceeded { return 8 }
+    // Rectangular orientation, independent hand-written 3x2 expected grids.
+    source: [24]u8 = .[1,0,0,255,2,0,0,255,3,0,0,255,4,0,0,255,5,0,0,255,6,0,0,255]
+    expected: [24]u8 = .[1,2,3,4,5,6,3,6,2,5,1,4,6,5,4,3,2,1,4,1,5,2,6,3]
+    for angle: cast(s32)0..3 {
+        metadata: ImageMetadata
+        metadata.width = ifx (angle & 1) == 0 then 3 else 2
+        metadata.height = ifx (angle & 1) == 0 then 2 else 3
+        for mirror: cast(s32)-1..1 {
+            result := AllocateImage(metadata, DefaultLimits(), null)
+            if !result.is_ok { return 9 }
+            error := CopyTransformed(source[:], 3, 0, 0, 3, 2, angle, mirror, *result, null)
+            if error.code != DecodeOK { return 10 }
+            for y: 0..metadata.height - 1 {
+                for x: 0..metadata.width - 1 {
+                    sx := ifx mirror == 1 then metadata.width - 1 - x else x
+                    sy := ifx mirror == 0 then metadata.height - 1 - y else y
+                    if result.image.pixels[(y * metadata.width + x) * 4] != expected[angle * 6 + sy * metadata.width + sx] { return 11 }
+                }
+            }
+        }
+    }
+    return 0
+}

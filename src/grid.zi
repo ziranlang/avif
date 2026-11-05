@@ -1,0 +1,46 @@
+using Output :: #import "output"
+GridLayout :: struct { rows: s32; columns: s32; width: s32; height: s32; cell_width: s32; cell_height: s32; }
+// Compose already converted RGBA cells in row-major order. This kernel does
+// not parse dimg references or choose color policy. Right/bottom edge cells
+// are clipped to the validated grid output dimensions, as required by AVIF.
+ComposeGridRGBA8Into :: (cells: []RgbaView, layout: GridLayout, output: OutputBuffer, options: DecodeOptions) -> PixelWriteResult {
+    error := ValidateOptions(*options)
+    if error.code != DecodeOK { return PixelFailure(error) }
+    if layout.rows <= 0 || layout.columns <= 0 || layout.rows > 128 || layout.columns > 128 ||
+       layout.rows * layout.columns > 128 || cells.count != cast(s64)layout.rows * layout.columns ||
+       layout.cell_width <= 0 || layout.cell_height <= 0 ||
+       layout.width <= cast(s64)(layout.columns - 1) * layout.cell_width || layout.width > cast(s64)layout.columns * layout.cell_width ||
+       layout.height <= cast(s64)(layout.rows - 1) * layout.cell_height || layout.height > cast(s64)layout.rows * layout.cell_height {
+        return PixelFailure(Error(InvalidInput))
+    }
+    error = ValidateOutput(output, layout.width, layout.height, options.limits)
+    if error.code != DecodeOK { return PixelFailure(error) }
+    for cell: cells {
+        error = ValidateRgba(cell, options.limits)
+        if error.code != DecodeOK { return PixelFailure(error) }
+        if cell.width != layout.cell_width || cell.height != layout.cell_height || ByteRangesOverlap(cell.data, output.data) { return PixelFailure(Error(InvalidInput)) }
+    }
+    acquired := false
+    if options.workers != null {
+        error = AcquireWorker(options.workers, options.cancellation)
+        if error.code != DecodeOK { return PixelFailure(error) }
+        acquired = true
+    }
+    defer { if acquired { unused ReleaseWorker(options.workers) } }
+    result: PixelWriteResult
+    for y: 0..layout.height - 1 {
+        error = CancellationError(options.cancellation)
+        if error.code != DecodeOK { result.error = error; return result }
+        row := y / layout.cell_height; cy := y % layout.cell_height
+        for x: 0..layout.width - 1 {
+            column := x / layout.cell_width; cx := x % layout.cell_width
+            cell := cells[row * layout.columns + column]
+            from := cast(s64)cy * cell.stride + cast(s64)cx * 4
+            to := cast(s64)y * output.stride + cast(s64)x * 4
+            result.output_may_be_modified = true
+            for channel: 0..3 { output.data[to + channel] = cell.data[from + channel] }
+        }
+    }
+    result.is_ok = true
+    return result
+}

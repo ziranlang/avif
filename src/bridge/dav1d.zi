@@ -1,0 +1,9 @@
+using Engine :: #import "engine"
+#import "static"
+#scope_file
+Dav1dDecode :: (input: BorrowedBytes, options: *DecodeOptions) -> DecodeResult { return BridgeDecode(StaticAPI(), input, options, 2) }
+#scope_export
+Dav1dEngine :: () -> Av1Engine {
+    caps := EngineCapabilities.{true, false, true, false, false, false, false, 1}
+    return Av1Engine.{"libavif-1.3.0/dav1d-1.5.4", caps, Dav1dDecode}
+}

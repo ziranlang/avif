@@ -1,0 +1,113 @@
+using Items :: #import "items"
+ParseProperties :: (input: BorrowedBytes, box: Box, container: *AvifContainer) -> DecodeError {
+    ipco := FindBox(input, box.payload, box.end, 0x6970636f)
+    if ipco.error.code != DecodeOK { return ipco.error }
+    if ipco.box.end == 0 { return Error(MalformedInput, box.start) }
+    at := ipco.box.payload
+    while at < ipco.box.end {
+        if container.property_count >= 256 { return Error(LimitExceeded, at) }
+        property := ReadBox(input, at, ipco.box.end)
+        if property.error.code != DecodeOK { return property.error }
+        container.properties[container.property_count] = ItemProperty.{property.box}
+        container.property_count += 1
+        at = property.box.end
+    }
+    ipma := FindBox(input, box.payload, box.end, 0x69706d61)
+    if ipma.error.code != DecodeOK { return ipma.error }
+    if ipma.box.end == 0 { return Error(MalformedInput, box.start) }
+    reader := OpenReader(input, ipma.box)
+    full := Take(*reader, 4); version := full >> 24
+    if version > 1 || (full & 0xfffffe) != 0 { return Error(UnsupportedCapability, ipma.box.payload) }
+    wide := (full & 1) != 0
+    count := Take(*reader, 4)
+    if count > 128 { return Error(LimitExceeded, reader.at) }
+    for i: cast(s32)0..cast(s32)count - 1 {
+        item := cast(u32)Take(*reader, ifx version == 0 then 2 else 4)
+        associations := Take(*reader, 1)
+        for a: cast(s32)0..cast(s32)associations - 1 {
+            raw := Take(*reader, ifx wide then 2 else 1)
+            if reader.error.code != DecodeOK { return reader.error }
+            index := raw & (ifx wide then cast(u64)32767 else cast(u64)127)
+            essential := (raw & (ifx wide then cast(u64)32768 else cast(u64)128)) != 0
+            if index == 0 { continue }
+            if index > cast(u64)container.property_count { return Error(MalformedInput, reader.at) }
+            if container.association_count >= 1024 { return Error(LimitExceeded, reader.at) }
+            for old: 0..container.association_count - 1 {
+                assoc := container.associations[old]
+                if assoc.item == item && assoc.property == cast(u32)index { return Error(MalformedInput, reader.at) }
+            }
+            container.associations[container.association_count] = PropertyAssociation.{item, cast(u32)index, essential}
+            container.association_count += 1
+        }
+    }
+    return Finish(*reader)
+}
+#scope_file
+AlphaAux :: (input: BorrowedBytes, begin: s64, end: s64) -> bool {
+    urn := "urn:mpeg:mpegB:cicp:systems:auxiliary:alpha"
+    if end - begin < urn.count + 1 { return false }
+    for i: 0..urn.count - 1 { if input.data[begin + i] != cast(u8)urn[i] { return false } }
+    return input.data[begin + urn.count] == 0
+}
+#scope_export
+ApplyProperties :: (input: BorrowedBytes, container: *AvifContainer, limits: DecodeLimits) -> DecodeError {
+    for a: 0..container.association_count - 1 {
+        assoc := container.associations[a]
+        index := FindItem(container, assoc.item)
+        if index < 0 { return Error(MalformedInput) }
+        box := container.properties[assoc.property - 1].box
+        reader := OpenReader(input, box)
+        if box.kind == 0x69737065 { // ispe
+            if container.items[index].width != 0 { return Error(MalformedInput, box.start) }
+            if Take(*reader, 4) != 0 { return Error(UnsupportedCapability, box.payload) }
+            w := Take(*reader, 4); h := Take(*reader, 4)
+            if w == 0 || h == 0 { return Error(MalformedInput, box.payload) }
+            if w > 32768 || h > 32768 || w * h > 67108864 { return Error(LimitExceeded, box.payload) }
+            error := ValidateDimensions(cast(s32)w, cast(s32)h, limits)
+            if error.code != DecodeOK { return Error(error.code, box.payload) }
+            container.items[index].width = cast(s32)w; container.items[index].height = cast(s32)h
+        } else if box.kind == 0x61763143 { // av1C
+            if container.items[index].has_config { return Error(MalformedInput, box.start) }
+            if Take(*reader, 1) != 129 { return Error(UnsupportedCapability, box.payload) }
+            unused Take(*reader, 1)
+            bits := Take(*reader, 1)
+            reserved := Take(*reader, 1)
+            if (reserved & 0xe0) != 0 || ((bits & 32) != 0 && (bits & 64) == 0) { return Error(MalformedInput, box.payload) }
+            container.items[index].depth = ifx (bits & 64) == 0 then 8 else ifx (bits & 32) == 0 then 10 else 12
+            container.items[index].has_config = true
+            // Remaining configOBUs are kept as part of this borrowed property.
+            reader.at = reader.end
+        } else if box.kind == 0x61757843 { // auxC
+            if Take(*reader, 4) != 0 { return Error(UnsupportedCapability, box.payload) }
+            container.items[index].alpha = AlphaAux(input, reader.at, reader.end)
+            reader.at = reader.end
+        } else if box.kind == 0x636c6170 { // clap
+            if container.items[index].has_crop { return Error(MalformedInput, box.start) }
+            for c: 0..7 { container.items[index].crop[c] = cast(u32)Take(*reader, 4) }
+            for d: 0..3 { if container.items[index].crop[d * 2 + 1] == 0 { return Error(MalformedInput, box.payload) } }
+            container.items[index].has_crop = true
+        } else if box.kind == 0x69726f74 { // irot
+            if container.items[index].has_rotation { return Error(MalformedInput, box.start) }
+            container.items[index].has_rotation = true
+            rotation := Take(*reader, 1)
+            if rotation > 3 { return Error(MalformedInput, box.payload) }
+            container.items[index].rotation = cast(s32)rotation
+        } else if box.kind == 0x696d6972 { // imir
+            if container.items[index].has_mirror { return Error(MalformedInput, box.start) }
+            container.items[index].has_mirror = true
+            mirror := Take(*reader, 1)
+            if mirror > 1 { return Error(MalformedInput, box.payload) }
+            container.items[index].mirror = cast(s32)mirror
+        } else if box.kind == 0x636f6c72 || box.kind == 0x70697869 || box.kind == 0x70617370 {
+            // Preserved bounded properties; color/pixi/aspect interpretation is
+            // not yet a capability of this extraction-only parser.
+            reader.at = reader.end
+        } else {
+            if assoc.essential { return Error(UnsupportedCapability, box.start) }
+            reader.at = reader.end
+        }
+        error := Finish(*reader)
+        if error.code != DecodeOK { return error }
+    }
+    return Error(DecodeOK)
+}

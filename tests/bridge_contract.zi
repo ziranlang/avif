@@ -1,0 +1,30 @@
+#import "avif/bridge"
+#import "std/byte_text_linux"
+created: s32;
+Wrong :: () -> *u8 { text := "1.4.2"; descriptor := cast(*TextDescriptor)(*text); return descriptor.data }
+Create :: () -> *RawDecoder { created += 1; return null }
+Destroy :: (decoder: *RawDecoder) { unused decoder }
+Memory :: (decoder: *RawDecoder, data: *u8, size: usize) -> s32 { unused decoder; unused data; unused size; return 0 }
+Step :: (decoder: *RawDecoder) -> s32 { unused decoder; return 0 }
+Defaults :: (rgb: *RawRGB, image: *RawImage) { unused rgb; unused image }
+Convert :: (image: *RawImage, rgb: *RawRGB) -> s32 { unused image; unused rgb; return 0 }
+Crop :: (crop: *RawCrop, aperture: *u32, width: u32, height: u32, format: s32, diagnostics: *void) -> s32 {
+    unused crop; unused aperture; unused width; unused height; unused format; unused diagnostics; return 0
+}
+#program_export
+main :: () -> s32 {
+    input: [16]u8 = .[0,0,0,16,102,116,121,112,97,118,105,102,0,0,0,0]
+    options := DefaultOptions(); budget := NewWorkerBudget(options.limits); options.workers = *budget
+    missing: AvifAPI
+    bad := DecodeWithAPI(missing, BorrowBytes(input[:]), options)
+    if bad.is_ok || bad.error.code != UnsupportedCapability || budget.active_workers != 0 { return 1 }
+    api := AvifAPI.{Wrong, Create, Destroy, Memory, Step, Step, Defaults, Convert, Crop}
+    wrong := DecodeWithAPI(api, BorrowBytes(input[:]), options)
+    if wrong.error.code != UnsupportedCapability || created != 0 || budget.active_workers != 0 { return 2 }
+    probe := BridgeProbe(api, BorrowBytes(input[:]), options)
+    if probe.error.code != UnsupportedCapability || created != 0 || budget.active_workers != 0 { return 3 }
+    storage: [4]u8 = .[77,77,77,77]
+    into := DecodeIntoWithAPI(api, BorrowBytes(input[:]), OutputBuffer.{storage[:],4}, options)
+    if into.error.code != UnsupportedCapability || into.output_may_be_modified || created != 0 || storage[0] != 77 || budget.active_workers != 0 { return 4 }
+    return 0
+}

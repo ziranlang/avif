@@ -1,0 +1,32 @@
+#import "avif/bridge"
+#import "std/mapped_file_linux"
+#import "std/byte_text_linux"
+#import "std/c_string"
+#import "std/text_tools"
+dynamic :: #system_library "dl";
+Open :: (path: *u8, flags: s32) -> *void #foreign dynamic "dlopen";
+Symbol :: (library: *void, name: *u8) -> *void #foreign dynamic "dlsym";
+Close :: (library: *void) -> s32 #foreign dynamic "dlclose";
+Lookup :: (library: *void, name: string) -> *void {
+    c_name: [80]u8
+    if !CopyCString(name, c_name[:]) { return null }
+    return Symbol(library, *c_name[0])
+}
+#import "bridge_cases"
+#program_export
+main :: (argc: s32, argv: **u8) -> s32 {
+    if argc != 3 { return 2 }
+    library := Open(argv[1], 2)
+    if library == null { return 3 }
+    defer { unused Close(library) }
+    api := AvifAPI.{cast(AvifVersion)Lookup(library, "avifVersion"), cast(AvifCreate)Lookup(library, "avifDecoderCreate"), cast(AvifDestroy)Lookup(library, "avifDecoderDestroy"), cast(AvifMemory)Lookup(library, "avifDecoderSetIOMemory"), cast(AvifStep)Lookup(library, "avifDecoderParse"), cast(AvifStep)Lookup(library, "avifDecoderNextImage"), cast(AvifDefaults)Lookup(library, "avifRGBImageSetDefaults"), cast(AvifConvert)Lookup(library, "avifImageYUVToRGB"), cast(AvifCrop)Lookup(library, "avifCropRectConvertCleanApertureBox")}
+    if ValidateAPI(api).code != DecodeOK { return 4 }
+    directory := TextFromCString(argv[2])
+    names: [17]string = .["rgba8", "rgba10", "rgba12", "gray8", "gray10", "gray12", "transform00", "transform01", "transform10", "transform11", "transform20", "transform21", "transform30", "transform31", "premultiplied", "opaque", "animated"]
+    for name: names {
+        code := CheckBridgeCase(api, directory, name)
+        if code != 0 { print("% dynamic case failed %\n", name, code); return code }
+    }
+    print("Dynamic bridge:17 exact owned/padded outputs, errors and ABI handshake passed without static AVIF linkage\n")
+    return 0
+}

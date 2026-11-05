@@ -1,0 +1,274 @@
+using Engine :: #import "engine"
+#import "bmff"
+#import "transform"
+#import "std/byte_text_linux"
+
+// Pinned libavif 1.3.0 public ABI, allocated/destroyed only by libavif.
+RawBytes :: struct { data: *u8; size: usize; }
+RawImage :: struct {
+    width: u32; height: u32; depth: u32
+    format: s32; range: s32; chroma: s32
+    planes: [3]*u8; rows: [3]u32; owns_yuv: s32
+    alpha: *u8; alpha_row: u32; owns_alpha: s32; premultiplied: s32
+    icc: RawBytes
+    primaries: u16; transfer: u16; matrix: u16; clli: [2]u16
+    transforms: u32; aspect: [2]u32; aperture: [8]u32
+    rotation: u8; mirror: u8
+    exif: RawBytes; xmp: RawBytes
+    properties: *void; property_count: usize; gain_map: *void
+}
+RawTiming :: struct { timescale: u64; pts: float64; pts_timescale: u64; duration: float64; duration_timescale: u64; }
+RawDecoder :: struct {
+    codec: s32; threads: s32; source: s32; progressive: s32; incremental: s32
+    ignore_exif: s32; ignore_xmp: s32
+    size_limit: u32; dimension_limit: u32; count_limit: u32; strict: u32
+    image: *RawImage
+    image_index: s32; image_count: s32
+    progressive_state: s32; timing: RawTiming
+    timescale: u64; duration: float64; duration_timescale: u64; repetitions: s32; alpha_present: s32
+}
+RawRGB :: struct {
+    width: u32; height: u32; depth: u32; format: s32
+    upsampling: s32; downsampling: s32; avoid_yuv: s32; ignore_alpha: s32
+    premultiplied: s32; float_pixels: s32; threads: s32
+    pixels: *u8; row_bytes: u32
+}
+RawCrop :: struct { x: u32; y: u32; width: u32; height: u32; }
+
+#scope_file
+NativeError :: (code: s32) -> DecodeError {
+    if code == 0 { return Error(DecodeOK) }
+    if code == 6 || code == 15 || code == 25 { return Error(UnsupportedCapability) }
+    if code == 26 { return Error(AllocationFailed) }
+    if code == 20 || code == 23 { return Error(TruncatedInput) }
+    return Error(MalformedInput)
+}
+SourceMetadata :: (image: *RawImage, frames: s32) -> ImageMetadata {
+    metadata: ImageMetadata
+    metadata.width = cast(s32)image.width; metadata.height = cast(s32)image.height
+    metadata.source_bit_depth = cast(s32)image.depth
+    metadata.has_alpha = image.alpha != null
+    metadata.source_premultiplied = image.premultiplied != 0
+    metadata.frame_count = frames
+    metadata.color_known = true
+    metadata.color_primaries = image.primaries
+    metadata.transfer_characteristics = image.transfer
+    metadata.matrix_coefficients = image.matrix
+    metadata.full_range = image.range == 1
+    metadata.metadata_bytes = cast(s64)image.icc.size
+    return metadata
+}
+CheckImage :: (image: *RawImage, frames: s32, options: *DecodeOptions) -> DecodeError {
+    if image == null { return Error(MalformedInput) }
+    if image.width == 0 || image.height == 0 { return Error(MalformedInput) }
+    if image.width > 32768 || image.height > 32768 || cast(u64)image.width * image.height > 67108864 { return Error(LimitExceeded) }
+    error := ValidateMetadata(SourceMetadata(image, frames), options.limits)
+    if error.code != DecodeOK { return error }
+    if image.depth != 8 && image.depth != 10 && image.depth != 12 { return Error(UnsupportedCapability) }
+    if image.icc.size != 0 || image.gain_map != null || image.transfer == 16 || image.transfer == 18 { return Error(UnsupportedCapability) }
+    return CancellationError(options.cancellation)
+}
+#scope_export
+AvifVersion :: #type () -> *u8 #c_call;
+AvifCreate :: #type () -> *RawDecoder #c_call;
+AvifDestroy :: #type (decoder: *RawDecoder) -> void #c_call;
+AvifMemory :: #type (decoder: *RawDecoder, data: *u8, size: usize) -> s32 #c_call;
+AvifStep :: #type (decoder: *RawDecoder) -> s32 #c_call;
+AvifDefaults :: #type (rgb: *RawRGB, image: *RawImage) -> void #c_call;
+AvifConvert :: #type (image: *RawImage, rgb: *RawRGB) -> s32 #c_call;
+AvifCrop :: #type (crop: *RawCrop, aperture: *u32, width: u32, height: u32, format: s32, diagnostics: *void) -> s32 #c_call;
+AvifAPI :: struct { version: AvifVersion; create: AvifCreate; destroy: AvifDestroy; memory: AvifMemory; parse: AvifStep; next: AvifStep; defaults: AvifDefaults; convert: AvifConvert; crop: AvifCrop; }
+ValidateAPI :: (api: AvifAPI) -> DecodeError {
+    if api.version == null || api.create == null || api.destroy == null || api.memory == null || api.parse == null || api.next == null || api.defaults == null || api.convert == null || api.crop == null { return Error(UnsupportedCapability) }
+    return Error(DecodeOK)
+}
+
+#scope_file
+BridgeInternal :: (api: AvifAPI, input: BorrowedBytes, options: *DecodeOptions, codec: s32, output: OutputBuffer, into: bool, modified: *bool) -> DecodeResult {
+    api_error := ValidateAPI(api)
+    if api_error.code != DecodeOK { return DecodeFailure(api_error) }
+    if codec != 1 && codec != 2 { return DecodeFailure(Error(UnsupportedCapability)) }
+    if input.data.count > 268435456 { return DecodeFailure(Error(LimitExceeded)) }
+    error := ValidateContainer(input)
+    if error.code != DecodeOK { return DecodeFailure(error) }
+    error = Preflight(input, options.limits)
+    if error.code != DecodeOK { return DecodeFailure(error) }
+    // ABI mismatch fails before touching any library-owned record.
+    if TextFromCString(api.version()) != "1.3.0" { return DecodeFailure(Error(UnsupportedCapability)) }
+    decoder := api.create()
+    if decoder == null { return DecodeFailure(Error(AllocationFailed)) }
+    defer { api.destroy(decoder) }
+    decoder.codec = codec // explicit engine choice, never AUTO
+    decoder.threads = 1; decoder.ignore_exif = 1; decoder.ignore_xmp = 1
+    decoder.size_limit = 67108864; decoder.dimension_limit = 32768; decoder.count_limit = 4096
+    error = NativeError(api.memory(decoder, *input.data[0], cast(usize)input.data.count))
+    if error.code != DecodeOK { return DecodeFailure(error) }
+    error = NativeError(api.parse(decoder))
+    if error.code != DecodeOK { return DecodeFailure(error) }
+    error = CheckImage(decoder.image, decoder.image_count, options)
+    if error.code != DecodeOK { return DecodeFailure(error) }
+    count := cast(s64)decoder.image.width * decoder.image.height * 4
+    error = NativeError(api.next(decoder)) // exactly one complete frame
+    if error.code != DecodeOK { return DecodeFailure(error) }
+    image := decoder.image
+    error = CheckImage(image, decoder.image_count, options)
+    if error.code != DecodeOK { return DecodeFailure(error) }
+    if cast(s64)image.width * image.height * 4 != count { return DecodeFailure(Error(MalformedInput)) }
+    crop := RawCrop.{0, 0, image.width, image.height}
+    diagnostics: [256]u8
+    if (image.transforms & 2) != 0 && api.crop(*crop, *image.aperture[0], image.width, image.height, image.format, cast(*void)*diagnostics[0]) == 0 { return DecodeFailure(Error(MalformedInput)) }
+    if crop.width == 0 || crop.height == 0 || crop.x > image.width || crop.y > image.height || crop.width > image.width - crop.x || crop.height > image.height - crop.y { return DecodeFailure(Error(MalformedInput)) }
+    angle := ifx (image.transforms & 4) != 0 then cast(s32)image.rotation else 0
+    mirror := ifx (image.transforms & 8) != 0 then cast(s32)image.mirror else -1
+    if angle > 3 || mirror > 1 { return DecodeFailure(Error(MalformedInput)) }
+    metadata := SourceMetadata(image, decoder.image_count)
+    metadata.width = cast(s32)crop.width; metadata.height = cast(s32)crop.height
+    if (angle & 1) != 0 { metadata.width = cast(s32)crop.height; metadata.height = cast(s32)crop.width }
+    error = ValidateMetadata(metadata, options.limits)
+    if error.code != DecodeOK { return DecodeFailure(error) }
+    direct := into && crop.x == 0 && crop.y == 0 && crop.width == image.width && crop.height == image.height && angle == 0 && mirror == -1 && output.stride <= 4294967295
+    if into {
+        error = ValidateOutput(output, metadata.width, metadata.height, options.limits)
+        if error.code != DecodeOK { return DecodeFailure(error) }
+    }
+    // Only transformed/owned output needs full-source RGBA scratch. Direct
+    // caller output does not consume the working-byte budget. Native engine
+    // allocations remain opaque and are not covered by this reservation.
+    reserved := false
+    if !direct {
+        if count > options.limits.max_working_bytes { return DecodeFailure(Error(LimitExceeded)) }
+        if options.workers != null {
+            error = ReserveWorkingBytes(options.workers, count, options.cancellation)
+            if error.code != DecodeOK { return DecodeFailure(error) }
+            reserved = true
+        }
+    }
+    defer { if reserved { unused ReleaseWorkingBytes(options.workers, count) } }
+    scratch: Vec(u8)
+    rgb: RawRGB
+    api.defaults(*rgb, image)
+    rgb.depth = 8; rgb.format = 1; rgb.premultiplied = 0; rgb.threads = 1
+    if direct {
+        rgb.row_bytes = cast(u32)output.stride; rgb.pixels = *output.data[0]
+        modified.* = true
+    } else {
+        if !VecResizeBounded(scratch, count, count) { return DecodeFailure(Error(AllocationFailed)) }
+        rgb.row_bytes = image.width * 4; rgb.pixels = *scratch[0]
+    }
+    error = NativeError(api.convert(image, *rgb))
+    if error.code != DecodeOK { return DecodeFailure(error) }
+    error = CancellationError(options.cancellation)
+    if error.code != DecodeOK { return DecodeFailure(error) }
+    if into {
+        if !direct {
+            error = CopyTransformedToOutput(VecSlice(scratch, 0, count), cast(s32)image.width, cast(s32)crop.x, cast(s32)crop.y,
+                cast(s32)crop.width, cast(s32)crop.height, angle, mirror, output, metadata.width, metadata.height, options.cancellation, modified)
+            if error.code != DecodeOK { return DecodeFailure(error) }
+        }
+        borrowed_result: DecodeResult
+        borrowed_result.metadata = metadata; borrowed_result.is_ok = true
+        return borrowed_result
+    }
+    result := AllocateImage(metadata, options.limits, options.cancellation)
+    if !result.is_ok { return result }
+    error = CopyTransformed(VecSlice(scratch, 0, count), cast(s32)image.width, cast(s32)crop.x, cast(s32)crop.y,
+        cast(s32)crop.width, cast(s32)crop.height, angle, mirror, *result, options.cancellation)
+    if error.code != DecodeOK { return DecodeFailure(error) }
+    result.is_ok = true
+    return result
+}
+
+
+#scope_export
+BridgeDecode :: (api: AvifAPI, input: BorrowedBytes, options: *DecodeOptions, codec: s32) -> DecodeResult {
+    output: OutputBuffer
+    return BridgeInternal(api, input, options, codec, output, false, null)
+}
+// Explicit optional native interop: no static library import in this module.
+DecodeWithAPI :: (api: AvifAPI, input: BorrowedBytes, options: DecodeOptions, codec: s32 = 1) -> DecodeResult {
+    error := ValidateOptions(*options)
+    if error.code == DecodeOK { error = ValidateInputSize(input.data.count, options.limits) }
+    if error.code != DecodeOK { return DecodeFailure(error) }
+    if options.color_mode != StrictColor { return DecodeFailure(Error(UnsupportedCapability)) }
+    if options.workers != null {
+        error = AcquireWorker(options.workers, options.cancellation)
+        if error.code != DecodeOK { return DecodeFailure(error) }
+        defer { unused ReleaseWorker(options.workers) }
+        return BridgeDecode(api, input, *options, codec)
+    }
+    return BridgeDecode(api, input, *options, codec)
+}
+
+DecodeIntoResult :: struct { is_ok: bool; metadata: ImageMetadata; error: DecodeError; output_may_be_modified: bool; }
+DecodeIntoWithAPI :: (api: AvifAPI, input: BorrowedBytes, output: OutputBuffer, options: DecodeOptions, codec: s32 = 1) -> DecodeIntoResult {
+    result: DecodeIntoResult
+    error := ValidateOptions(*options)
+    if error.code == DecodeOK { error = ValidateInputSize(input.data.count, options.limits) }
+    if error.code != DecodeOK { result.error = error; return result }
+    if options.color_mode != StrictColor { result.error = Error(UnsupportedCapability); return result }
+    acquired := false
+    if options.workers != null {
+        error = AcquireWorker(options.workers, options.cancellation)
+        if error.code != DecodeOK { result.error = error; return result }
+        acquired = true
+    }
+    defer { if acquired { unused ReleaseWorker(options.workers) } }
+    decoded := BridgeInternal(api, input, *options, codec, output, true, *result.output_may_be_modified)
+    result.is_ok = decoded.is_ok; result.metadata = decoded.metadata; result.error = decoded.error
+    return result
+}
+
+ProbeResult :: struct { is_ok: bool; metadata: ImageMetadata; error: DecodeError; }
+#scope_file
+ProbeFailure :: (error: DecodeError) -> ProbeResult { result: ProbeResult; result.error = error; return result }
+ProbeInternal :: (api: AvifAPI, input: BorrowedBytes, options: *DecodeOptions, codec: s32) -> ProbeResult {
+    error := ValidateAPI(api)
+    if error.code == DecodeOK { error = ValidateContainer(input) }
+    if error.code == DecodeOK { error = Preflight(input, options.limits) }
+    if error.code != DecodeOK { return ProbeFailure(error) }
+    if codec != 1 && codec != 2 { return ProbeFailure(Error(UnsupportedCapability)) }
+    if TextFromCString(api.version()) != "1.3.0" { return ProbeFailure(Error(UnsupportedCapability)) }
+    decoder := api.create()
+    if decoder == null { return ProbeFailure(Error(AllocationFailed)) }
+    defer { api.destroy(decoder) }
+    decoder.codec = codec; decoder.threads = 1; decoder.ignore_exif = 1; decoder.ignore_xmp = 1
+    decoder.size_limit = 67108864; decoder.dimension_limit = 32768; decoder.count_limit = 4096
+    error = NativeError(api.memory(decoder, *input.data[0], cast(usize)input.data.count))
+    if error.code == DecodeOK { error = NativeError(api.parse(decoder)) }
+    if error.code != DecodeOK { return ProbeFailure(error) }
+    error = CheckImage(decoder.image, decoder.image_count, options)
+    if error.code != DecodeOK { return ProbeFailure(error) }
+    image := decoder.image
+    crop := RawCrop.{0, 0, image.width, image.height}
+    diagnostics: [256]u8
+    if (image.transforms & 2) != 0 && api.crop(*crop, *image.aperture[0], image.width, image.height, image.format, cast(*void)*diagnostics[0]) == 0 { return ProbeFailure(Error(MalformedInput)) }
+    if crop.width == 0 || crop.height == 0 || crop.x > image.width || crop.y > image.height || crop.width > image.width - crop.x || crop.height > image.height - crop.y { return ProbeFailure(Error(MalformedInput)) }
+    angle := ifx (image.transforms & 4) != 0 then cast(s32)image.rotation else 0
+    if angle > 3 || ((image.transforms & 8) != 0 && image.mirror > 1) { return ProbeFailure(Error(MalformedInput)) }
+    metadata := SourceMetadata(image, decoder.image_count)
+    metadata.has_alpha = decoder.alpha_present != 0
+    metadata.width = cast(s32)crop.width; metadata.height = cast(s32)crop.height
+    if (angle & 1) != 0 { metadata.width = cast(s32)crop.height; metadata.height = cast(s32)crop.width }
+    error = ValidateMetadata(metadata, options.limits)
+    if error.code != DecodeOK { return ProbeFailure(error) }
+    result: ProbeResult; result.is_ok = true; result.metadata = metadata
+    return result
+}
+#scope_export
+// Container-only bounded parse: never calls next/defaults/convert and never
+// allocates pixels. DecodeInto re-parses and revalidates all output dimensions.
+BridgeProbe :: (api: AvifAPI, input: BorrowedBytes, options: DecodeOptions, codec: s32 = 1) -> ProbeResult {
+    error := ValidateOptions(*options)
+    if error.code == DecodeOK { error = ValidateInputSize(input.data.count, options.limits) }
+    if error.code != DecodeOK { return ProbeFailure(error) }
+    if input.data.count > 268435456 { return ProbeFailure(Error(LimitExceeded)) }
+    if options.color_mode != StrictColor { return ProbeFailure(Error(UnsupportedCapability)) }
+    acquired := false
+    if options.workers != null {
+        error = AcquireWorker(options.workers, options.cancellation)
+        if error.code != DecodeOK { return ProbeFailure(error) }
+        acquired = true
+    }
+    defer { if acquired { unused ReleaseWorker(options.workers) } }
+    return ProbeInternal(api, input, *options, codec)
+}

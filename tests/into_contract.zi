@@ -1,0 +1,104 @@
+#import "avif/bridge"
+#import "std/byte_text_linux"
+AllocationProbe :: #system_library "c";
+ResetAllocations :: () #foreign AllocationProbe "avif_test_reset_allocations";
+LargestAllocation :: () -> usize #foreign AllocationProbe "avif_test_largest_allocation";
+image: RawImage;
+decoder: RawDecoder;
+destination: *u8;
+budget_pointer: *WorkerBudget;
+token_pointer: *Cancellation;
+converts: s32;
+destroys: s32;
+expected_working: s64;
+expected_stride: u32;
+direct: bool;
+convert_failure: bool;
+cancel_conversion: bool;
+next_failure: bool;
+contract_error: bool;
+Version :: () -> *u8 { text := "1.3.0"; descriptor := cast(*TextDescriptor)*text; return descriptor.data }
+Create :: () -> *RawDecoder { return *decoder }
+Destroy :: (value: *RawDecoder) { unused value; destroys += 1 }
+Memory :: (value: *RawDecoder, data: *u8, size: usize) -> s32 { unused value; unused data; unused size; return 0 }
+Parse :: (value: *RawDecoder) -> s32 { value.image = *image; value.image_count = 1; return 0 }
+Next :: (value: *RawDecoder) -> s32 { unused value; return ifx next_failure then 11 else 0 }
+Defaults :: (rgb: *RawRGB, value: *RawImage) { rgb.width = value.width; rgb.height = value.height }
+Convert :: (value: *RawImage, rgb: *RawRGB) -> s32 {
+    converts += 1
+    if (rgb.pixels == destination) != direct || rgb.row_bytes != expected_stride || budget_pointer.working_bytes != expected_working { contract_error = true }
+    if rgb.depth != 8 || rgb.format != 1 || rgb.premultiplied != 0 || rgb.threads != 1 { contract_error = true }
+    for y: 0..cast(s32)value.height - 1 {
+        for x: 0..cast(s32)value.width * 4 - 1 { rgb.pixels[cast(s64)y * rgb.row_bytes + x] = cast(u8)(y * 12 + x) }
+    }
+    if cancel_conversion { Cancel(token_pointer) }
+    return ifx convert_failure then 11 else 0
+}
+Crop :: (crop: *RawCrop, aperture: *u32, width: u32, height: u32, format: s32, diagnostics: *void) -> s32 {
+    unused aperture; unused format; unused diagnostics
+    crop.* = RawCrop.{0,0,width,height}; return 1
+}
+EmptyFailure :: (result: DecodeIntoResult, code: s32, modified: bool) -> bool {
+    return !result.is_ok && result.error.code == code && result.output_may_be_modified == modified && result.metadata.width == 0 && result.metadata.height == 0
+}
+#program_export
+main :: () -> s32 {
+    input: [16]u8 = .[0,0,0,16,102,116,121,112,97,118,105,102,0,0,0,0]
+    image.width = 3; image.height = 2; image.depth = 8
+    storage: [64]u8
+    options := DefaultOptions(); options.limits.max_working_bytes = 1
+    budget := NewWorkerBudget(options.limits); options.workers = *budget; budget_pointer = *budget
+    token: Cancellation; token_pointer = *token; options.cancellation = *token
+    output := OutputBuffer.{storage[:],17}; destination = *storage[0]
+    api := AvifAPI.{Version,Create,Destroy,Memory,Parse,Next,Defaults,Convert,Crop}
+    direct = true; expected_stride = 17
+    // Identity, explicit full crop and explicit zero rotation all convert into
+    // the exact caller pointer with zero working-byte reservation.
+    for transform: 0..2 {
+        image.transforms = ifx transform == 0 then 0 else ifx transform == 1 then 2 else 6
+        for i: 0..63 { storage[i] = 77 }
+        ResetAllocations()
+        result := DecodeIntoWithAPI(api, BorrowBytes(input[:]), output, options)
+        if LargestAllocation() != 0 { return 14 }
+        if !result.is_ok || !result.output_may_be_modified || result.metadata.width != 3 || result.metadata.height != 2 || contract_error { return 1 }
+        if budget.active_workers != 0 || budget.working_bytes != 0 { return 2 }
+        for y: 0..1 {
+            for x: 0..11 { if storage[y * 17 + x] != cast(u8)(y * 12 + x) { return 3 } }
+            for x: 12..16 { if storage[y * 17 + x] != 77 { return 4 } }
+        }
+    }
+    for i: 0..63 { storage[i] = 77 }
+    before := converts
+    output.data = storage[:28]
+    small := DecodeIntoWithAPI(api, BorrowBytes(input[:]), output, options)
+    if !EmptyFailure(small, OutputTooSmall, false) || converts != before || storage[0] != 77 { return 5 }
+    output.data = storage[:]; output.stride = 11
+    invalid := DecodeIntoWithAPI(api, BorrowBytes(input[:]), output, options)
+    if !EmptyFailure(invalid, InvalidInput, false) || converts != before || storage[0] != 77 { return 6 }
+    output.stride = 17; token.requested = true
+    cancelled := DecodeIntoWithAPI(api, BorrowBytes(input[:]), output, options)
+    if !EmptyFailure(cancelled, DecodeCancelled, false) || converts != before || storage[0] != 77 { return 7 }
+    token.requested = false; next_failure = true
+    failed := DecodeIntoWithAPI(api, BorrowBytes(input[:]), output, options)
+    if !EmptyFailure(failed, MalformedInput, false) || converts != before || storage[0] != 77 { return 8 }
+    next_failure = false; convert_failure = true
+    conversion_failed := DecodeIntoWithAPI(api, BorrowBytes(input[:]), output, options)
+    if !EmptyFailure(conversion_failed, MalformedInput, true) || storage[0] != 0 { return 9 }
+    convert_failure = false; cancel_conversion = true
+    conversion_cancelled := DecodeIntoWithAPI(api, BorrowBytes(input[:]), output, options)
+    if !EmptyFailure(conversion_cancelled, DecodeCancelled, true) { return 10 }
+    cancel_conversion = false; token.requested = false
+    // Rotation needs one bounded source frame. Rejection precedes conversion,
+    // then a sufficient reservation reaches the converter's scratch pointer.
+    image.transforms = 4; image.rotation = 1; before = converts
+    limited := DecodeIntoWithAPI(api, BorrowBytes(input[:]), output, options)
+    if !EmptyFailure(limited, LimitExceeded, false) || converts != before { return 11 }
+    options.limits.max_working_bytes = 24; budget.max_working_bytes = 24
+    direct = false; expected_working = 24; expected_stride = 12
+    ResetAllocations()
+    transformed := DecodeIntoWithAPI(api, BorrowBytes(input[:]), output, options)
+    if LargestAllocation() != 24 { print("scratch allocation bytes: %\n", LargestAllocation()); return 15 }
+    if !transformed.is_ok || !transformed.output_may_be_modified || transformed.metadata.width != 2 || transformed.metadata.height != 3 || contract_error { return 12 }
+    if budget.active_workers != 0 || budget.working_bytes != 0 || destroys != 10 { return 13 }
+    return 0
+}

@@ -1,0 +1,84 @@
+#import "parse"
+#import "std/mapped_file_linux"
+#import "std/byte_text_linux"
+#import "std/text_tools"
+Compare :: (directory: string, name: string, suffix: string, item: *ItemBytes) -> bool {
+    parts: [4]string = .[directory, "/", name, suffix]
+    golden := MapPrivate(TextJoin(parts[:], ""))
+    if !golden.valid { return false }
+    defer { unused UnmapFile(golden) }
+    if item.error.code != DecodeOK || cast(u64)item.data.count != golden.length { return false }
+    data := MappedBytes(golden)
+    for i: 0..data.count - 1 { if data[i] != item.data[i] { return false } }
+    return true
+}
+#program_export
+main :: (argc: s32, argv: **u8) -> s32 {
+    if argc != 3 { return 2 }
+    directory := TextFromCString(argv[1])
+    names: [17]string = .["rgba8", "rgba10", "rgba12", "gray8", "gray10", "gray12", "transform00", "transform01", "transform10", "transform11", "transform20", "transform21", "transform30", "transform31", "premultiplied", "opaque", "animated"]
+    for name: names {
+        parts: [4]string = .[directory, "/", name, ".avif"]
+        file := MapPrivate(TextJoin(parts[:], ""))
+        if !file.valid { return 3 }
+        data := BorrowBytes(MappedBytes(file))
+        limits := DefaultLimits()
+        container := ParseAvif(data, limits)
+        if container.error.code != DecodeOK { print("% parse error % at %\n", name, container.error.code, container.error.offset); return 4 }
+        primary := FindItem(*container, container.primary)
+        if primary < 0 || container.items[primary].width != 8 || container.items[primary].height != 6 { return 5 }
+        item := ExtractItem(data, *container, container.primary, limits)
+        if !Compare(directory, name, ".color.obu", *item) { print("% color OBU differs\n", name); return 6 }
+        if item.data.capacity != item.data.count { return 11 }
+        exact_limits := limits; exact_limits.max_working_bytes = item.data.count
+        exact := ExtractItem(data, *container, container.primary, exact_limits)
+        if exact.error.code != DecodeOK || exact.data.capacity != item.data.count { return 12 }
+        exact_limits.max_working_bytes = item.data.count - 1
+        limited := ExtractItem(data, *container, container.primary, exact_limits)
+        if limited.error.code != LimitExceeded || limited.data.count != 0 { return 13 }
+        missing := ExtractItem(data, *container, 4294967295, limits)
+        if missing.error.code != InvalidInput || missing.data.count != 0 { return 14 }
+        if container.alpha != 0 {
+            alpha := ExtractItem(data, *container, container.alpha, limits)
+            if !Compare(directory, name, ".alpha.obu", *alpha) { return 7 }
+        }
+        if container.items[primary].premultiplied != (name == "premultiplied") { return 8 }
+        if name.count >= 9 && name[:9] == "transform" {
+            if !container.items[primary].has_crop { return 9 }
+            if container.items[primary].rotation != cast(s32)name[9] - 48 || container.items[primary].mirror != cast(s32)name[10] - 48 { return 10 }
+        }
+        unused UnmapFile(file)
+    }
+    bad_directory := TextFromCString(argv[2])
+    bad: [9]string = .["missing-primary", "duplicate-primary", "external-reference", "extent-outside", "duplicate-item", "unknown-essential", "bad-property-index", "duplicate-association", "dangling-reference"]
+    for name: bad {
+        parts: [4]string = .[bad_directory, "/", name, ".avif"]
+        file := MapPrivate(TextJoin(parts[:], ""))
+        if !file.valid { return 20 }
+        container := ParseAvif(BorrowBytes(MappedBytes(file)), DefaultLimits())
+        unused UnmapFile(file)
+        expected := ifx name == "external-reference" || name == "unknown-essential" then UnsupportedCapability else ifx name == "extent-outside" then TruncatedInput else MalformedInput
+        if container.error.code != expected { print("% graph error %, expected %\n", name, container.error.code, expected); return 21 }
+    }
+    // Every proper prefix and one-byte corruption exercises bounded paths.
+    parts: [4]string = .[directory, "/", "rgba8", ".avif"]
+    fuzz := MapPrivate(TextJoin(parts[:], ""))
+    if !fuzz.valid { return 22 }
+    data := MappedBytes(fuzz)
+    for end: 0..data.count - 1 {
+        prefix := ParseAvif(BorrowBytes(data[:end]), DefaultLimits())
+        if prefix.error.code == DecodeOK { return 23 }
+    }
+    for at: 0..data.count - 1 {
+        old := data[at]; data[at] = old ^ 255
+        mutated := ParseAvif(BorrowBytes(data), DefaultLimits())
+        if mutated.error.code == DecodeOK {
+            extracted := ExtractItem(BorrowBytes(data), *mutated, mutated.primary, DefaultLimits())
+            if extracted.error.code != DecodeOK { return 24 }
+        }
+        data[at] = old
+    }
+    unused UnmapFile(fuzz)
+    print("Authored AVIF graph:17 OBU goldens,9 malformed graphs, all prefixes and byte corruptions passed\n")
+    return 0
+}

@@ -1,0 +1,102 @@
+{
+  "schema": 1,
+  "scope": "AVIF package excluding AV1-owned files",
+  "status": "owned AVIF integration and scalar output subset locally validated",
+  "committed": false,
+  "pushed": false,
+  "released": false,
+  "installed": false,
+  "github_checks": "none",
+  "files": {
+    "src/bridge.zi": "fe0a601483f0aa8b256f63ef2f4df824da5f1220e508bd169f6dbfcbf2e8da02",
+    "src/bmff.zi": "bd9bef66c2d4bb7723589204b1f1e8de787c370368e39b4ca4c6d0c8015c987a",
+    "src/parse.zi": "79ee040b163e34737b7578f54ab0e42e1c94476482c9ad28bf1c4459ed9d971f",
+    "src/color.zi": "ce19ce6a147c26299a3a6c4e5bfa2b933167880ef8228ad7d7f5fcbcb7325812",
+    "src/alpha.zi": "40ce01c1bb1ccb3dbdc19bcc470ab4795cc6221adba99fd4945f11215f139e82",
+    "src/output.zi": "3744a107d204da15c26334799f179e525134478d08ac285ddcda0bcf9bcf17f4",
+    "src/grid.zi": "0ac7652795cfa6343efb8dfe468880480a05b82c11c07f2c5fe6e3eefead8c20",
+    "native/provider.py": "0ee8f4dc94b11ceaf354cbe2955a3c62664f8ddddfbfccf0a3f565ad2f1f5425",
+    "native/CMakeLists.txt": "e6592e20b67717c39c48c54596d32b8839cc7e3e1b60fc2df45ab3955114a0e0",
+    "native/ZiranAvif.cmake": "f53f6131de04b95e20d81b68b079179fcac9d2fcf28f841793e39137601b0f90",
+    "Makefile": "da127ecf9d9b2f7e443d55a981d18c96b3d0dab3852588122e4da210074ad8b9"
+  },
+  "completed_local_tests": [
+    {
+      "command": "build-queue -- sh tests/avif.sh",
+      "code": 0,
+      "receipt": "5e8afe73ff5846390708158cc444f649c12d"
+    },
+    {
+      "command": "build-queue -- sh tests/bridges.sh",
+      "code": 0,
+      "receipt": "014e5a231035b5f932ba4000a74e4bb21859",
+      "note": "before final bounded scratch patch; focused bounded tests and final AVIF suite afterward passed"
+    },
+    {
+      "command": "build-queue -- sh -c 'sh tests/into_contract.sh && sh tests/container.sh'",
+      "code": 0,
+      "receipt": "907780408e903dda61b9040f3b8d86aba884"
+    },
+    {
+      "command": "build-queue -- sh -c 'sh tests/native_recipe.sh && sh tests/abi.sh'",
+      "code": 0,
+      "receipt": "224a804c159b79305a0429389c0abdd52b0e"
+    },
+    {
+      "command": "build-queue -- env AVIF_LOCAL_INPUT=/mnt/storage/Projects/kryonlabs/kryon/tests/fixtures/avif/jungle-title.avif sh tests/benchmark.sh",
+      "code": 0,
+      "receipt": "a316469417dee201f5e59c06b285c7e69c60"
+    },
+    {
+      "command": "build-queue -- sh -c 'sh tests/bridges.sh && env AVIF_LOCAL_INPUT=/mnt/storage/Projects/kryonlabs/kryon/tests/fixtures/avif/jungle-title.avif sh tests/benchmark.sh'",
+      "code": 0,
+      "receipt": "65aafe7ae17160dc63b7a536836861cf7b87",
+      "includes": [
+        "AVIF full suite",
+        "ABI source/saved",
+        "dynamic loader without codec linkage",
+        "caller output + independent bounded allocator probe",
+        "container graph + bounded OBU extraction",
+        "native static consumer, locking and staged failure",
+        "486 scalar cases source/saved C/Go/directVM",
+        "AOM+dav1d frozen17goldens",
+        "post-change named-engine benchmark"
+      ]
+    }
+  ],
+  "pending_local_tests": [],
+  "unchanged_baseline_sha256": "34e9540622a0470dfab8f431d5670124745d335774ddf5917b78e1913f05f89a",
+  "limitations": [
+    "libavif1.4.2/AOM3.15.1 comparison unvalidated",
+    "no Android device execution by this worker",
+    "no default engine switch or AVIF grid-container parsing from standalone scalar kernels",
+    "portable whole-slice overlap validation is linear in slice lengths"
+  ],
+  "scalar_case_count": 486,
+  "benchmarks": {
+    "tiny": {
+      "engines": [
+        "AOM3.13.1",
+        "dav1d1.5.4"
+      ],
+      "conversion": "libavif1.3.0",
+      "p50_ns": [
+        156961,
+        59791
+      ],
+      "aom_over_dav1d_p50": 2.6251609774046263
+    },
+    "local": {
+      "engines": [
+        "AOM3.13.1",
+        "dav1d1.5.4"
+      ],
+      "conversion": "libavif1.3.0",
+      "p50_ns": [
+        36733078,
+        23235512
+      ],
+      "aom_over_dav1d_p50": 1.580902456550129
+    }
+  }
+}

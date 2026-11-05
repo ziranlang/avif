@@ -1,0 +1,29 @@
+#import "api"
+#import "std/mapped_file_linux"
+#import "std/file_linux"
+#import "std/byte_text_linux"
+#program_export
+main :: (argc: s32, argv: **u8) -> s32 {
+    if argc != 3 && argc != 4 { print("usage: avif INPUT OUTPUT.rgba [aom|dav1d]\n"); return 2 }
+    engine := DefaultEngine()
+    if argc == 4 {
+        choice := TextFromCString(argv[3])
+        if choice == "dav1d" { engine = Dav1dOracle() }
+        else if choice != "aom" { print("unsupported capability\n"); return 5 }
+    }
+    file := MapPrivate(TextFromCString(argv[1]))
+    if !file.valid { print("input/output failed\n"); return 11 }
+    defer { unused UnmapFile(file) }
+    options := DefaultOptions()
+    result := DecodeWithEngine(engine, BorrowBytes(MappedBytes(file)), *options)
+    if !result.is_ok { print("% at %\n", ErrorText(result.error.code), result.error.offset); return result.error.code }
+    output := OpenReplace(TextFromCString(argv[2]))
+    if !output.valid { return 11 }
+    bytes := BytesFromPointer(*result.image.pixels[0], cast(u64)result.image.pixels.count)
+    written := Write(output, bytes)
+    closed := CloseFile(output)
+    if written != bytes.count || !closed { return 11 }
+    print("%x% RGBA8; depth %; source frames %; alpha %\n", result.image.width,
+        result.image.height, result.metadata.source_bit_depth, result.metadata.frame_count, result.metadata.has_alpha)
+    return 0
+}

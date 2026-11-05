@@ -1,0 +1,114 @@
+using Properties :: #import "properties"
+using Vectors :: #import "std/vec"
+
+ParseAvif :: (input: BorrowedBytes, limits: DecodeLimits) -> AvifContainer {
+    container: AvifContainer
+    error := ValidateInputSize(input.data.count, limits)
+    if input.data.count > 268435456 { error = Error(LimitExceeded) }
+    if error.code == DecodeOK { error = ValidateContainer(input) }
+    if error.code == DecodeOK { error = Preflight(input, limits) }
+    if error.code != DecodeOK { container.error = error; return container }
+    meta := FindBox(input, 0, input.data.count, 0x6d657461)
+    if meta.error.code != DecodeOK { container.error = meta.error; return container }
+    if meta.box.end == 0 { container.error = Error(UnsupportedCapability); return container }
+    reader := OpenReader(input, meta.box)
+    if Take(*reader, 4) != 0 { container.error = Error(UnsupportedCapability, reader.at - 4); return container }
+    begin := reader.at
+    primary := FindBox(input, begin, meta.box.end, 0x7069746d)
+    info := FindBox(input, begin, meta.box.end, 0x69696e66)
+    locations := FindBox(input, begin, meta.box.end, 0x696c6f63)
+    properties := FindBox(input, begin, meta.box.end, 0x69707270)
+    references := FindBox(input, begin, meta.box.end, 0x69726566)
+    idat := FindBox(input, begin, meta.box.end, 0x69646174)
+    if primary.error.code != DecodeOK { container.error = primary.error; return container }
+    if info.error.code != DecodeOK { container.error = info.error; return container }
+    if locations.error.code != DecodeOK { container.error = locations.error; return container }
+    if properties.error.code != DecodeOK { container.error = properties.error; return container }
+    if references.error.code != DecodeOK { container.error = references.error; return container }
+    if idat.error.code != DecodeOK { container.error = idat.error; return container }
+    if primary.box.end == 0 || info.box.end == 0 || locations.box.end == 0 || properties.box.end == 0 { container.error = Error(MalformedInput, meta.box.start); return container }
+    reader = OpenReader(input, primary.box)
+    full := Take(*reader, 4); version := full >> 24
+    if version > 1 || (full & 0xffffff) != 0 { container.error = Error(UnsupportedCapability, primary.box.payload); return container }
+    container.primary = cast(u32)Take(*reader, ifx version == 0 then 2 else 4)
+    error = Finish(*reader)
+    if error.code == DecodeOK { error = ParseInfo(input, info.box, *container) }
+    if error.code == DecodeOK { error = ParseLocations(input, locations.box, *container) }
+    if error.code == DecodeOK { error = ParseProperties(input, properties.box, *container) }
+    if error.code == DecodeOK && references.box.end != 0 { error = ParseReferences(input, references.box, *container) }
+    if error.code == DecodeOK { error = ApplyProperties(input, *container, limits) }
+    if error.code != DecodeOK { container.error = error; return container }
+    container.idat = idat.box
+    for i: 0..container.item_count - 1 {
+        item := container.items[i]
+        if !item.has_info || !item.has_location || item.extent_count <= 0 { container.error = Error(MalformedInput); return container }
+        for e: 0..item.extent_count - 1 {
+            extent := item.extents[e]
+            base: s64 = ifx item.construction == 1 then container.idat.payload else 0
+            end := ifx item.construction == 1 then container.idat.end else input.data.count
+            if (item.construction == 1 && container.idat.end == 0) || extent.offset > end - base || extent.count > end - base - extent.offset || extent.count <= 0 { container.error = Error(TruncatedInput, extent.offset); return container }
+        }
+        if item.kind == 0x61763031 && (item.width == 0 || !item.has_config) { container.error = Error(MalformedInput); return container }
+    }
+    primary_index := FindItem(*container, container.primary)
+    if primary_index < 0 { container.error = Error(MalformedInput); return container }
+    if container.items[primary_index].kind != 0x61763031 { container.error = Error(UnsupportedCapability); return container }
+    for r: 0..container.reference_count - 1 {
+        ref := container.references[r]
+        from := FindItem(*container, ref.from); to := FindItem(*container, ref.to)
+        if from < 0 || to < 0 { container.error = Error(MalformedInput); return container }
+        if ref.kind == 0x6175786c && ref.to == container.primary && container.items[from].alpha {
+            if container.alpha != 0 { container.error = Error(MalformedInput); return container }
+            container.alpha = ref.from
+        }
+        if ref.kind == 0x7072656d && ref.from == container.primary { container.items[primary_index].premultiplied = true }
+        if ref.kind == 0x64696d67 { container.error = Error(UnsupportedCapability); return container }
+    }
+    if container.alpha != 0 {
+        alpha_index := FindItem(*container, container.alpha)
+        alpha := container.items[alpha_index]
+        color := container.items[primary_index]
+        if alpha.kind != 0x61763031 || alpha.width != color.width || alpha.height != color.height || alpha.depth != color.depth { container.error = Error(MalformedInput); return container }
+    }
+    for r: 0..container.reference_count - 1 {
+        ref := container.references[r]
+        if ref.kind == 0x7072656d && ref.from == container.primary && (container.alpha == 0 || ref.to != container.alpha) { container.error = Error(MalformedInput); return container }
+    }
+    return container
+}
+ItemBytes :: struct { data: Vec(u8); error: DecodeError; }
+ItemFailure :: (error: DecodeError) -> ItemBytes { result: ItemBytes; result.error = error; return result }
+// Independent owned bytes for future authored OBU engine input. Never hands
+// native decoder objects or borrowed source pointers to an engine.
+ExtractItem :: (input: BorrowedBytes, container: *AvifContainer, id: u32, limits: DecodeLimits) -> ItemBytes {
+    error := ValidateInputSize(input.data.count, limits)
+    if error.code != DecodeOK { return ItemFailure(error) }
+    if container == null { return ItemFailure(Error(InvalidInput)) }
+    if container.error.code != DecodeOK { return ItemFailure(container.error) }
+    if container.item_count < 0 || container.item_count > 128 { return ItemFailure(Error(InvalidInput)) }
+    index := FindItem(container, id)
+    if index < 0 { return ItemFailure(Error(InvalidInput)) }
+    item := container.items[index]
+    if item.extent_count <= 0 || item.extent_count > 16 || item.construction < 0 || item.construction > 1 { return ItemFailure(Error(InvalidInput)) }
+    base := ifx item.construction == 1 then container.idat.payload else cast(s64)0
+    end := ifx item.construction == 1 then container.idat.end else input.data.count
+    if base < 0 || end < base || end > input.data.count { return ItemFailure(Error(InvalidInput)) }
+    count: s64
+    for e: 0..item.extent_count - 1 {
+        size := item.extents[e].count
+        offset := item.extents[e].offset
+        if offset < 0 || offset > end - base || size > end - base - offset { return ItemFailure(Error(TruncatedInput, offset)) }
+        if size <= 0 || size > limits.max_working_bytes - count { return ItemFailure(Error(LimitExceeded)) }
+        count += size
+    }
+    result: ItemBytes
+    if !VecResizeBounded(result.data, count, count) { return ItemFailure(Error(AllocationFailed)) }
+    at: s64
+    for e: 0..item.extent_count - 1 {
+        extent := item.extents[e]
+        bytes, error := ByteRange(input, base + extent.offset, extent.count)
+        if error.code != DecodeOK { return ItemFailure(error) }
+        for i: 0..extent.count - 1 { result.data[at] = bytes.data[i]; at += 1 }
+    }
+    return result
+}

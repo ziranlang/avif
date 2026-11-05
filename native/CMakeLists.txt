@@ -1,0 +1,8 @@
+cmake_minimum_required(VERSION 3.16)
+project(ziran_avif C CXX ASM)
+include("${CMAKE_CURRENT_LIST_DIR}/ZiranAvif.cmake")
+set(codec_options BUILD_SHARED_BRIDGE)
+if(WITH_DAV1D)
+  list(APPEND codec_options WITH_DAV1D DAV1D_SOURCE "${DAV1D_SOURCE}")
+endif()
+ziran_avif_add_native(AVIF_SOURCE "${AVIF_SOURCE}" AOM_SOURCE "${AOM_SOURCE}" ${codec_options})

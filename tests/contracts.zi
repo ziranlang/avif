@@ -1,0 +1,93 @@
+#import "avif/api"
+#import "avif/engine"
+#import "avif/bmff"
+#import "std/mapped_file_linux"
+#import "std/byte_text_linux"
+#import "std/text_tools"
+
+FakeFailure :: (input: BorrowedBytes, options: *DecodeOptions) -> DecodeResult {
+    unused input; unused options
+    return DecodeFailure(Error(MalformedInput, 17))
+}
+CheckFixture :: (directory: string, name: string, fixture_engine: Av1Engine) -> s32 {
+    parts: [4]string = .[directory, "/", name, ".avif"]
+    input := MapPrivate(TextJoin(parts[:], ""))
+    if !input.valid { return 1 }
+    defer { unused UnmapFile(input) }
+    options := DefaultOptions()
+    budget := NewWorkerBudget(options.limits)
+    options.workers = *budget
+    result := DecodeWithEngine(fixture_engine, BorrowBytes(MappedBytes(input)), *options)
+    if !result.is_ok { print("%: error % at %\n", name, result.error.code, result.error.offset); return 2 }
+    if budget.active_workers != 0 || budget.working_bytes != 0 || budget.peak_workers != 1 || budget.peak_working_bytes <= 0 { return 3 }
+    if result.metadata.frame_count != (ifx name == "animated" then 2 else 1) { return 4 }
+    if result.metadata.source_bit_depth != (ifx name == "rgba10" || name == "gray10" then 10 else ifx name == "rgba12" || name == "gray12" then 12 else 8) { return 5 }
+    if result.metadata.source_premultiplied != (name == "premultiplied") { return 6 }
+    parts[3] = ".strict.rgba"
+    golden := MapPrivate(TextJoin(parts[:], ""))
+    if !golden.valid { return 7 }
+    defer { unused UnmapFile(golden) }
+    if result.image.pixels.count != cast(s64)golden.length { return 8 }
+    bytes := MappedBytes(golden)
+    for i: 0..bytes.count - 1 {
+        if result.image.pixels[i] != bytes[i] { print("% mismatch at %\n", name, i); return 9 }
+    }
+    // Source animation is allowed under max_decoded_frames=1. Source cap is
+    // independently enforced; budget leases return on native failure paths.
+    if name == "animated" {
+        options.limits.max_frames = 1
+        rejected := DecodeWithEngine(fixture_engine, BorrowBytes(MappedBytes(input)), *options)
+        if rejected.is_ok || rejected.error.code != LimitExceeded || budget.active_workers != 0 { return 10 }
+    }
+    return 0
+}
+#program_export
+main :: (argc: s32, argv: **u8) -> s32 {
+    if argc != 2 && argc != 3 { return 2 }
+    fixture_engine := DefaultEngine()
+    if argc == 3 {
+        if TextFromCString(argv[2]) != "dav1d" { return 2 }
+        fixture_engine = Dav1dOracle()
+    }
+    directory := TextFromCString(argv[1])
+    input: [1]u8 = .[0]
+    options := DefaultOptions()
+    budget := NewWorkerBudget(options.limits)
+    options.workers = *budget
+    caps := EngineCapabilities.{true, false, true, false, false, false, false, 1}
+    engine := Av1Engine.{"failure", caps, FakeFailure}
+    failed := DecodeWithEngine(engine, BorrowBytes(input[:]), *options)
+    if failed.is_ok || failed.error.code != MalformedInput || failed.error.offset != 17 || budget.active_workers != 0 || budget.peak_workers != 1 { return 20 }
+    options.color_mode = FastColor
+    fast := DecodeWithEngine(engine, BorrowBytes(input[:]), *options)
+    if fast.error.code != UnsupportedCapability || budget.active_workers != 0 { return 21 }
+    options.color_mode = StrictColor
+    token: Cancellation
+    Cancel(*token); options.cancellation = *token
+    cancelled := DecodeWithEngine(engine, BorrowBytes(input[:]), *options)
+    if cancelled.error.code != DecodeCancelled || budget.active_workers != 0 { return 22 }
+    options.cancellation = null
+    budget.active_workers = 1
+    busy := DecodeWithEngine(engine, BorrowBytes(input[:]), *options)
+    if busy.error.code != WorkerBudgetExceeded || budget.active_workers != 1 { return 23 }
+    budget.active_workers = 0
+    names: [17]string = .["rgba8", "rgba10", "rgba12", "gray8", "gray10", "gray12", "transform00", "transform01", "transform10", "transform11", "transform20", "transform21", "transform30", "transform31", "premultiplied", "opaque", "animated"]
+    for name: names {
+        code := CheckFixture(directory, name, fixture_engine)
+        if code != 0 { print("% failed %\n", name, code); return 30 + code }
+    }
+    bad: [5]string = .["oversized", "pixel-limit", "bad-crop", "truncated", "malformed"]
+    for name: bad {
+        parts: [4]string = .[directory, "/", name, ".avif"]
+        file := MapPrivate(TextJoin(parts[:], ""))
+        if !file.valid { return 50 }
+        result := DecodeWithEngine(fixture_engine, BorrowBytes(MappedBytes(file)), *options)
+        unused UnmapFile(file)
+        expected := ifx name == "oversized" || name == "pixel-limit" then LimitExceeded else ifx name == "truncated" || name == "malformed" then TruncatedInput else MalformedInput
+        if result.is_ok || result.error.code != expected || result.image.pixels.count != 0 || budget.active_workers != 0 || budget.working_bytes != 0 {
+            print("% invalid class %, expected %\n", name, result.error.code, expected); return 51
+        }
+    }
+    print("AVIF exact RGBA8, depths, transforms, alpha, first frame, errors and worker leases passed\n")
+    return 0
+}

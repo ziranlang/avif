@@ -1,0 +1,61 @@
+using Codec :: #import "image_codec/api"
+RgbaView :: struct { width: s32; height: s32; stride: s64; data: []u8; }
+PixelWriteResult :: struct { is_ok: bool; error: DecodeError; output_may_be_modified: bool; }
+OutputTransform :: struct { x: s32; y: s32; width: s32; height: s32; angle: s32; mirror: s32; }
+PixelFailure :: (error: DecodeError) -> PixelWriteResult { result: PixelWriteResult; result.error = error; return result }
+ValidateRgba :: (view: RgbaView, limits: DecodeLimits) -> DecodeError {
+    return ValidateOutput(OutputBuffer.{view.data, view.stride}, view.width, view.height, limits)
+}
+// Conservative overlap detection includes the whole caller-provided slices.
+// Borrowed input must remain unchanged until a synchronous kernel returns.
+ByteRangesOverlap :: (a: []u8, b: []u8) -> bool {
+    if a.count == 0 || b.count == 0 { return false }
+    // Address equality is portable across C, Go and the direct VM; numeric
+    // pointer ordering is not. An overlap puts one slice's first byte inside
+    // the other. This allocation-free validation is linear in slice lengths.
+    first := *a[0]; second := *b[0]
+    for i: 0..a.count - 1 { if *a[i] == second { return true } }
+    for i: 0..b.count - 1 { if *b[i] == first { return true } }
+    return false
+}
+TransformRGBA8Into :: (source: RgbaView, transform: OutputTransform, output: OutputBuffer, options: DecodeOptions) -> PixelWriteResult {
+    error := ValidateOptions(*options)
+    if error.code == DecodeOK { error = ValidateRgba(source, options.limits) }
+    if error.code != DecodeOK { return PixelFailure(error) }
+    if transform.x < 0 || transform.y < 0 || transform.width <= 0 || transform.height <= 0 ||
+       transform.x > source.width || transform.y > source.height || transform.width > source.width - transform.x ||
+       transform.height > source.height - transform.y || transform.angle < 0 || transform.angle > 3 || transform.mirror < -1 || transform.mirror > 1 {
+        return PixelFailure(Error(InvalidInput))
+    }
+    width := ifx (transform.angle & 1) == 0 then transform.width else transform.height
+    height := ifx (transform.angle & 1) == 0 then transform.height else transform.width
+    error = ValidateOutput(output, width, height, options.limits)
+    if error.code != DecodeOK { return PixelFailure(error) }
+    if ByteRangesOverlap(source.data, output.data) { return PixelFailure(Error(InvalidInput)) }
+    acquired := false
+    if options.workers != null {
+        error = AcquireWorker(options.workers, options.cancellation)
+        if error.code != DecodeOK { return PixelFailure(error) }
+        acquired = true
+    }
+    defer { if acquired { unused ReleaseWorker(options.workers) } }
+    result: PixelWriteResult
+    for y: 0..transform.height - 1 {
+        error = CancellationError(options.cancellation)
+        if error.code != DecodeOK { result.error = error; return result }
+        for x: 0..transform.width - 1 {
+            dx := x; dy := y
+            if transform.angle == 1 { dx = y; dy = transform.width - 1 - x }
+            else if transform.angle == 2 { dx = transform.width - 1 - x; dy = transform.height - 1 - y }
+            else if transform.angle == 3 { dx = transform.height - 1 - y; dy = x }
+            if transform.mirror == 0 { dy = height - 1 - dy }
+            else if transform.mirror == 1 { dx = width - 1 - dx }
+            from := cast(s64)(y + transform.y) * source.stride + cast(s64)(x + transform.x) * 4
+            to := cast(s64)dy * output.stride + cast(s64)dx * 4
+            result.output_may_be_modified = true
+            for channel: 0..3 { output.data[to + channel] = source.data[from + channel] }
+        }
+    }
+    result.is_ok = true
+    return result
+}

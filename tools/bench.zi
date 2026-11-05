@@ -1,0 +1,35 @@
+#import "api"
+#import "image_codec/benchmark"
+#import "std/mapped_file_linux"
+#import "std/byte_text_linux"
+Aom :: (input: BorrowedBytes, metadata: ImageMetadata, options: *DecodeOptions) -> DecodeResult {
+    unused metadata
+    return DecodeWithEngine(DefaultEngine(), input, options)
+}
+Dav1d :: (input: BorrowedBytes, metadata: ImageMetadata, options: *DecodeOptions) -> DecodeResult {
+    unused metadata
+    return DecodeWithEngine(Dav1dOracle(), input, options)
+}
+#program_export
+main :: (argc: s32, argv: **u8) -> s32 {
+    if argc != 4 { return 2 }
+    source := TextFromCString(argv[1]); expected := MapPrivate(TextFromCString(argv[2]))
+    if !expected.valid { return InputOutputFailed }
+    defer { unused UnmapFile(expected) }
+    choice := TextFromCString(argv[3])
+    engine := DefaultEngine()
+    provider: DecodeProcedure = Aom
+    if choice == "dav1d" { engine = Dav1dOracle(); provider = Dav1d }
+    else if choice != "aom" { return UnsupportedCapability }
+    options := DefaultOptions(); budget := NewWorkerBudget(options.limits); options.workers = *budget
+    file := MapPrivate(source)
+    if !file.valid { return InputOutputFailed }
+    decoded := DecodeWithEngine(engine, BorrowBytes(MappedBytes(file)), *options)
+    unused UnmapFile(file)
+    if !decoded.is_ok { return decoded.error.code }
+    metadata := decoded.metadata
+    result := BenchmarkFile(source, MappedBytes(expected), metadata, *options, provider, 16)
+    if !result.is_ok { print("error %\n", result.error.code); return result.error.code }
+    print("%\n", BenchmarkJSON(*result, engine.name, "current-source-toolchain"))
+    return 0
+}

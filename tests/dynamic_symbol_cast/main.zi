@@ -1,0 +1,3 @@
+#import "callbacks"
+#program_export
+main :: () -> s32 { pointer: *void; callback := cast(Callback)pointer; unused callback; return 0 }
