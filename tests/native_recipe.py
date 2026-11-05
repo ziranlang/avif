@@ -37,25 +37,26 @@ def main():
     OUT.mkdir(parents=True, exist_ok=True)
     tool = os.environ['ZIRAN']
     paths = {name: subprocess.check_output([tool,'pkg','path',name], cwd=ROOT, text=True).strip()
-             for name in ('libavif','libaom')}
+             for name in ('libavif','libaom','dav1d')}
     project = OUT/'consumer'
     project.mkdir(exist_ok=True)
-    (project/'CMakeLists.txt').write_text('''cmake_minimum_required(VERSION 3.16)
+    (project/'CMakeLists.txt').write_text('''cmake_minimum_required(VERSION 3.17)
 project(avif_consumer C CXX ASM)
 include("${AVIF_PACKAGE}/native/ZiranAvif.cmake")
-ziran_avif_add_native(AVIF_SOURCE "${AVIF_SOURCE}" AOM_SOURCE "${AOM_SOURCE}")
+ziran_avif_add_native(AVIF_SOURCE "${AVIF_SOURCE}" AOM_SOURCE "${AOM_SOURCE}" DAV1D_SOURCE "${DAV1D_SOURCE}")
 # Idempotent repeated inclusion must not duplicate the codec targets.
-ziran_avif_add_native(AVIF_SOURCE "${AVIF_SOURCE}" AOM_SOURCE "${AOM_SOURCE}")
+ziran_avif_add_native(AVIF_SOURCE "${AVIF_SOURCE}" AOM_SOURCE "${AOM_SOURCE}" DAV1D_SOURCE "${DAV1D_SOURCE}")
 add_executable(native_consumer "${AVIF_PACKAGE}/tests/native_consumer.c")
 target_link_libraries(native_consumer PRIVATE ziran_avif::static)
 ''')
     build = OUT/'consumer-build'
     run(['cmake','-S',project,'-B',build,'-DCMAKE_BUILD_TYPE=Release',f'-DAVIF_PACKAGE={ROOT}',
-         f'-DAVIF_SOURCE={paths["libavif"]}',f'-DAOM_SOURCE={paths["libaom"]}'],'consumer-configure')
+         f'-DAVIF_SOURCE={paths["libavif"]}',f'-DAOM_SOURCE={paths["libaom"]}',
+         f'-DDAV1D_SOURCE={paths["dav1d"]}','-DZIRAN_AVIF_DAV1D_JOBS=1'],'consumer-configure')
     cache = (build/'CMakeCache.txt').read_text().splitlines()
     for setting in ('CONFIG_AV1_ENCODER:BOOL=0','CONFIG_AV1_DECODER:BOOL=1','CONFIG_MULTITHREAD:BOOL=0',
                     'AVIF_CODEC_AOM_ENCODE:BOOL=OFF','AVIF_CODEC_AOM_DECODE:BOOL=ON',
-                    'AVIF_CODEC_DAV1D:STRING=OFF','AVIF_LIBYUV:STRING=OFF'):
+                    'AVIF_CODEC_DAV1D:STRING=SYSTEM','AVIF_LIBYUV:STRING=OFF'):
         assert setting in cache, setting
     run(['cmake','--build',build,'--target','native_consumer','--parallel','1'],'consumer-build')
     run([build/'native_consumer',ROOT/'tests/fixtures/rgba8.avif',ROOT/'tests/fixtures/rgba8.strict.rgba'],'consumer-run')

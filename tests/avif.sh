@@ -27,9 +27,11 @@ TOML
 (cd "$consumer"; "$ziran" lock --offline)
 native=$(cd "$consumer"; "$ziran" pkg artifact avif:native --platform linux-x86_64-gnu)
 base=$(dirname "$native")
-export LDLIBS="$base/lib/libavif.a $base/lib/libaom.a -lm"
+export LDLIBS="$base/lib/libavif.a $base/lib/libaom.a -lpthread -ldl -lm"
 printf '%s\n' "$native" >"$out/native-artifact.txt"
-AVIF_LIB_DIR="$base/lib" sh tests/bridge_core.sh
+# dav1d is the default engine; libaom is the explicit oracle. Both must pass.
+AVIF_LIB_DIR="$base/lib" AVIF_ENGINE=dav1d sh tests/bridge_core.sh
+AVIF_LIB_DIR="$base/lib" AVIF_ENGINE=libaom sh tests/bridge_core.sh
 sh tests/abi.sh
 sh tests/bridge_contract.sh
 sh tests/into_contract.sh

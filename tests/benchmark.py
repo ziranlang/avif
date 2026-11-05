@@ -25,7 +25,7 @@ with open('/proc/cpuinfo') as f:
         if flags is None and line.startswith('flags'): flags=line.partition(':')[2].split()
         if model is not None and flags is not None: break
 reports=[]
-for engine in ('aom','dav1d'):
+for engine in ('libaom','dav1d'):
     log=out.parent/(out.stem+'-'+engine+'.json')
     with log.open('wb') as target:
         start=time.perf_counter_ns()
@@ -44,7 +44,7 @@ for engine in ('aom','dav1d'):
     report['process_metrics_scope']='entire process: metadata decode, correctness preflight, 16 timed decodes, hashes/validation/serialization/destruction'
     reports.append(report)
 assert reports[0]['output_hash']==reports[1]['output_hash']
-artifact=Path((root/'build/scratch/avif/dav1d-artifact.txt').read_text().strip())
+artifact=Path((root/'build/scratch/avif/native-artifact.txt').read_text().strip())
 result={'schema':1,'kind':'full-file-to-RGBA8','claims':'local warm comparison; no fastest or 10x claim',
     'input':str(a.input.resolve()),'input_sha256':digest(a.input),'expected_sha256':digest(a.expected),
     'local_only_source':a.local_only,'runner_sha256':digest(runner),
@@ -52,7 +52,7 @@ result={'schema':1,'kind':'full-file-to-RGBA8','claims':'local warm comparison; 
     'cpu_model':model,'cpu_flags':flags,'allowed_cpus':sorted(os.sched_getaffinity(0)),
     'artifact_provenance':json.loads((artifact.parent/'provenance.json').read_text()),
     'reports':reports,
-    'dav1d_vs_aom_p50_ratio':reports[0]['p50_ns']/reports[1]['p50_ns'] if reports[1]['p50_ns'] else None,
+    'libaom_vs_dav1d_p50_ratio':reports[0]['p50_ns']/reports[1]['p50_ns'] if reports[1]['p50_ns'] else None,
     'unmeasured':['allocator calls','energy','cold cache','hardware engines','other machines','latest libavif/libaom conversion stack']}
 out.write_text(json.dumps(result,indent=2)+'\n')
 print('Full-codec comparison validated and recorded:',out)

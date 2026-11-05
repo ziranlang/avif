@@ -39,5 +39,16 @@ main :: () -> s32 {
     missing_engine.capabilities = caps
     missing := DecodeWithEngine(missing_engine, BorrowBytes(input[:]), *options)
     if missing.error.code != UnsupportedCapability || budget.active_workers != 0 { return 6 }
+    // Engines declare a bounded native thread fan-out: 1..MAX_DECODE_THREADS.
+    engine.decode_container = FakeSuccess
+    engine.capabilities.max_threads = MAX_DECODE_THREADS
+    bounded := DecodeWithEngine(engine, BorrowBytes(input[:]), *options)
+    if !bounded.is_ok || budget.active_workers != 0 || budget.peak_workers != 1 { return 7 }
+    engine.capabilities.max_threads = 0
+    unbounded := DecodeWithEngine(engine, BorrowBytes(input[:]), *options)
+    if unbounded.error.code != UnsupportedCapability || budget.active_workers != 0 { return 8 }
+    engine.capabilities.max_threads = MAX_DECODE_THREADS + 1
+    excessive := DecodeWithEngine(engine, BorrowBytes(input[:]), *options)
+    if excessive.error.code != UnsupportedCapability || budget.active_workers != 0 { return 9 }
     return 0
 }

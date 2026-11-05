@@ -46,9 +46,11 @@ main :: (argc: s32, argv: **u8) -> s32 {
     if argc != 2 && argc != 3 { return 2 }
     fixture_engine := DefaultEngine()
     if argc == 3 {
-        if TextFromCString(argv[2]) != "dav1d" { return 2 }
-        fixture_engine = Dav1dOracle()
+        choice := TextFromCString(argv[2])
+        if choice == "libaom" { fixture_engine = LibaomOracle() }
+        else if choice != "dav1d" { return 2 }
     }
+    if fixture_engine.capabilities.max_threads < 1 || fixture_engine.capabilities.max_threads > MAX_DECODE_THREADS { return 24 }
     directory := TextFromCString(argv[1])
     input: [1]u8 = .[0]
     options := DefaultOptions()

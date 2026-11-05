@@ -2,13 +2,13 @@
 #import "image_codec/benchmark"
 #import "std/mapped_file_linux"
 #import "std/byte_text_linux"
-Aom :: (input: BorrowedBytes, metadata: ImageMetadata, options: *DecodeOptions) -> DecodeResult {
+Libaom :: (input: BorrowedBytes, metadata: ImageMetadata, options: *DecodeOptions) -> DecodeResult {
     unused metadata
-    return DecodeWithEngine(DefaultEngine(), input, options)
+    return DecodeWithEngine(LibaomOracle(), input, options)
 }
 Dav1d :: (input: BorrowedBytes, metadata: ImageMetadata, options: *DecodeOptions) -> DecodeResult {
     unused metadata
-    return DecodeWithEngine(Dav1dOracle(), input, options)
+    return DecodeWithEngine(DefaultEngine(), input, options)
 }
 #program_export
 main :: (argc: s32, argv: **u8) -> s32 {
@@ -18,9 +18,9 @@ main :: (argc: s32, argv: **u8) -> s32 {
     defer { unused UnmapFile(expected) }
     choice := TextFromCString(argv[3])
     engine := DefaultEngine()
-    provider: DecodeProcedure = Aom
-    if choice == "dav1d" { engine = Dav1dOracle(); provider = Dav1d }
-    else if choice != "aom" { return UnsupportedCapability }
+    provider: DecodeProcedure = Dav1d
+    if choice == "libaom" { engine = LibaomOracle(); provider = Libaom }
+    else if choice != "dav1d" { return UnsupportedCapability }
     options := DefaultOptions(); budget := NewWorkerBudget(options.limits); options.workers = *budget
     file := MapPrivate(source)
     if !file.valid { return InputOutputFailed }

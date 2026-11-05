@@ -3,11 +3,12 @@ using Engine :: #import "engine"
 #import "dav1d"
 // First complete frame, owned std/image.Image with straight RGBA8 pixels.
 Decode :: (input: BorrowedBytes, options: DecodeOptions) -> DecodeResult {
-    return DecodeWithEngine(LibaomEngine(), input, *options)
+    return DecodeWithEngine(DefaultEngine(), input, *options)
 }
 
-DefaultEngine :: () -> Av1Engine { return LibaomEngine() }
-Dav1dOracle :: () -> Av1Engine { return Dav1dEngine() }
+// dav1d is the default engine; libaom is the explicit comparison oracle.
+DefaultEngine :: () -> Av1Engine { return Dav1dEngine() }
+LibaomOracle :: () -> Av1Engine { return LibaomEngine() }
 // Static hosts explicitly link a native recipe; optional/dlopen hosts import
 // avif/bridge alone and supply its function table.
 Interop :: #import "bridge";

@@ -4,12 +4,12 @@
 #import "std/byte_text_linux"
 #program_export
 main :: (argc: s32, argv: **u8) -> s32 {
-    if argc != 3 && argc != 4 { print("usage: avif INPUT OUTPUT.rgba [aom|dav1d]\n"); return 2 }
+    if argc != 3 && argc != 4 { print("usage: avif INPUT OUTPUT.rgba [dav1d|libaom]\n"); return 2 }
     engine := DefaultEngine()
     if argc == 4 {
         choice := TextFromCString(argv[3])
-        if choice == "dav1d" { engine = Dav1dOracle() }
-        else if choice != "aom" { print("unsupported capability\n"); return 5 }
+        if choice == "libaom" { engine = LibaomOracle() }
+        else if choice != "dav1d" { print("unsupported capability\n"); return 5 }
     }
     file := MapPrivate(TextFromCString(argv[1]))
     if !file.valid { print("input/output failed\n"); return 11 }

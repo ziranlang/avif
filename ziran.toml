@@ -18,7 +18,7 @@ project = "build/bin/avif-native"
 
 [artifacts.native]
 inputs = ["Makefile", "native/provider.py", "native/CMakeLists.txt", "native/ZiranAvif.cmake", "native/requirements.txt"]
-outputs = ["lib/libavif_bridge.so", "lib/libavif.a", "lib/libaom.a", "resources/LICENSE-libavif", "resources/LICENSE-libaom", "resources/PATENTS-libaom", "provenance.json", "link.txt"]
+outputs = ["lib/libavif_bridge.so", "lib/libavif.a", "lib/libaom.a", "resources/LICENSE-libavif", "resources/LICENSE-libaom", "resources/PATENTS-libaom", "resources/LICENSE-dav1d", "provenance.json", "link.txt"]
 
 [dependencies.libavif]
 git = "https://github.com/AOMediaCodec/libavif.git"
@@ -38,7 +38,3 @@ ref = "a8767d78d0c08d5b1c1fc0bab6fcafdc7a6da930"
 git = "https://github.com/videolan/dav1d.git"
 ref = "54706fc6bc0cdecab7e9593974a4039cc038fca7"
 source = true
-
-[artifacts.native-dav1d]
-inputs = ["Makefile", "native/provider.py", "native/CMakeLists.txt", "native/ZiranAvif.cmake", "native/requirements.txt"]
-outputs = ["lib/libavif_bridge.so", "lib/libavif.a", "lib/libaom.a", "lib/libdav1d.a", "resources/LICENSE-libavif", "resources/LICENSE-libaom", "resources/PATENTS-libaom", "resources/LICENSE-dav1d", "provenance.json", "link.txt"]

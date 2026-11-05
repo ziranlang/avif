@@ -1,9 +1,11 @@
 using Engine :: #import "engine"
 #import "static"
 #scope_file
-Dav1dDecode :: (input: BorrowedBytes, options: *DecodeOptions) -> DecodeResult { return BridgeDecode(StaticAPI(), input, options, 2) }
+Dav1dDecode :: (input: BorrowedBytes, options: *DecodeOptions) -> DecodeResult { return BridgeDecode(StaticAPI(), input, options, CodecDav1d) }
 #scope_export
+// Default engine: dav1d's runtime-dispatched assembly with the bridge's
+// automatic thread policy, at most AutoThreads() threads.
 Dav1dEngine :: () -> Av1Engine {
-    caps := EngineCapabilities.{true, false, true, false, false, false, false, 1}
+    caps := EngineCapabilities.{true, false, true, false, false, false, false, AutoThreads()}
     return Av1Engine.{"libavif-1.3.0/dav1d-1.5.4", caps, Dav1dDecode}
 }

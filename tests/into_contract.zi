@@ -12,6 +12,7 @@ converts: s32;
 destroys: s32;
 expected_working: s64;
 expected_stride: u32;
+expected_threads: s32 = 1;
 direct: bool;
 convert_failure: bool;
 cancel_conversion: bool;
@@ -27,7 +28,9 @@ Defaults :: (rgb: *RawRGB, value: *RawImage) { rgb.width = value.width; rgb.heig
 Convert :: (value: *RawImage, rgb: *RawRGB) -> s32 {
     converts += 1
     if (rgb.pixels == destination) != direct || rgb.row_bytes != expected_stride || budget_pointer.working_bytes != expected_working { contract_error = true }
-    if rgb.depth != 8 || rgb.format != 1 || rgb.premultiplied != 0 || rgb.threads != 1 { contract_error = true }
+    // A 3x2 frame is below every threading threshold: one automatic thread, and the
+    // default codec is explicit dav1d.
+    if rgb.depth != 8 || rgb.format != 1 || rgb.premultiplied != 0 || rgb.threads != expected_threads || decoder.threads != expected_threads || decoder.codec != CodecDav1d { contract_error = true }
     for y: 0..cast(s32)value.height - 1 {
         for x: 0..cast(s32)value.width * 4 - 1 { rgb.pixels[cast(s64)y * rgb.row_bytes + x] = cast(u8)(y * 12 + x) }
     }
@@ -100,5 +103,20 @@ main :: () -> s32 {
     if LargestAllocation() != 24 { print("scratch allocation bytes: %\n", LargestAllocation()); return 15 }
     if !transformed.is_ok || !transformed.output_may_be_modified || transformed.metadata.width != 2 || transformed.metadata.height != 3 || contract_error { return 12 }
     if budget.active_workers != 0 || budget.working_bytes != 0 || destroys != 10 { return 13 }
+    // Explicit bounded thread requests reach libavif's decoder and converter.
+    expected_threads = MAX_DECODE_THREADS
+    threaded := DecodeIntoWithAPI(api, BorrowBytes(input[:]), output, options, CodecDav1d, MAX_DECODE_THREADS)
+    if !threaded.is_ok || contract_error { return 16 }
+    before = converts
+    excessive := DecodeIntoWithAPI(api, BorrowBytes(input[:]), output, options, CodecDav1d, MAX_DECODE_THREADS + 1)
+    if !EmptyFailure(excessive, UnsupportedCapability, false) || converts != before { return 17 }
+    unknown := DecodeIntoWithAPI(api, BorrowBytes(input[:]), output, options, 0)
+    if !EmptyFailure(unknown, UnsupportedCapability, false) || converts != before { return 18 }
+    // Automatic policy: usable cores capped at AUTO_THREADS, 4:4:4/4:2:2/4:0:0
+    // from THREADED_MIN_PIXELS and 4:2:0 only from THREADED_MIN_PIXELS_420.
+    auto := AutoThreads()
+    if auto < 1 || auto > AUTO_THREADS || AUTO_THREADS > MAX_DECODE_THREADS { return 19 }
+    if DecodeThreads(THREADED_MIN_PIXELS - 1, 1) != 1 || DecodeThreads(THREADED_MIN_PIXELS, 1) != auto || DecodeThreads(THREADED_MIN_PIXELS, 4) != auto { return 20 }
+    if DecodeThreads(THREADED_MIN_PIXELS_420 - 1, PixelFormatYUV420) != 1 || DecodeThreads(THREADED_MIN_PIXELS_420, PixelFormatYUV420) != auto { return 21 }
     return 0
 }

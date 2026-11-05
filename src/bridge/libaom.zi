@@ -1,7 +1,9 @@
 using Engine :: #import "engine"
 #import "static"
 #scope_file
-AomDecode :: (input: BorrowedBytes, options: *DecodeOptions) -> DecodeResult { return BridgeDecode(StaticAPI(), input, options, 1) }
+// libaom is built without CONFIG_MULTITHREAD, so its AV1 decode stays on one
+// thread; one-thread conversion keeps the oracle identical to the prior path.
+AomDecode :: (input: BorrowedBytes, options: *DecodeOptions) -> DecodeResult { return BridgeDecode(StaticAPI(), input, options, CodecLibaom, 1) }
 #scope_export
 LibaomEngine :: () -> Av1Engine {
     caps := EngineCapabilities.{true, false, true, false, false, false, false, 1}

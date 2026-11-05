@@ -1,7 +1,7 @@
 # AVIF package API
 
 `avif/api` exports `Decode(input: BorrowedBytes, options: DecodeOptions) ->
-DecodeResult`, `DefaultEngine() -> Av1Engine` and `Dav1dOracle() -> Av1Engine`.
+DecodeResult`, `DefaultEngine() -> Av1Engine` and `LibaomOracle() -> Av1Engine`.
 It reexports shared image-codec types. All output is owned `std/image.Image`.
 Input is a synchronous borrow: keep its bytes alive and unchanged through the
 call. No native decoder, allocation or native structure leaves the bridge.
@@ -16,11 +16,16 @@ misrepresenting libavif as an authored AV1 engine. An OBU/plane capability is a
 future separately tested API extension.
 
 Both native choices use the same libavif conversion and Ziran transform path.
-`DefaultEngine` explicitly selects libaom; `Dav1dOracle` explicitly selects
-dav1d. Selecting an unavailable native codec returns `UnsupportedCapability`;
-there is no automatic fallback. Engines have `container_bridge=true`,
-`strict_rgba8=true`, `max_threads=1`, `fast_color=false`, `hdr=false`,
-`interruptible=false` and `hard_scratch_limit=false`.
+`DefaultEngine` (and `Decode`) explicitly selects dav1d with its
+runtime-dispatched assembly; `LibaomOracle` explicitly selects single-threaded
+libaom, the comparison oracle. Selecting an unavailable native codec returns
+`UnsupportedCapability`; there is no automatic fallback between them. Engines
+have `container_bridge=true`, `strict_rgba8=true`, `fast_color=false`,
+`hdr=false`, `interruptible=false` and `hard_scratch_limit=false`.
+`max_threads` is the engine's bounded native fan-out inside its one worker
+lease: 1 for libaom, and `AutoThreads()` (the device's usable cores capped at
+`AUTO_THREADS`, 4) for dav1d. `DecodeWithEngine` rejects a bound below 1 or
+above `MAX_DECODE_THREADS` (8).
 
 ## Decode semantics
 
@@ -38,7 +43,8 @@ HDR output or gain-map rendering is implemented. FastColor, PQ, HLG, gain maps,
 ICC color-management requests, and unavailable engine choices return
 `UnsupportedCapability`. RGBA8 conversion of ordinary high-bit-depth SDR
 sources does not imply HDR support. Strict output is byte-identical to the
-saved current libavif/libaom baseline on the package's 17 generated cases.
+saved libavif/libaom baseline on the package's 17 generated cases for both
+engines and every thread count.
 
 ## Limits and errors
 
@@ -67,8 +73,16 @@ needed scratch separately from owned output. It does
 There is no hard total engine-memory guarantee in this bridge. Consumers that
 require that guarantee must inspect `hard_scratch_limit=false` and decline it.
 
-One worker lease includes the caller. Native decode and conversion use one
-thread. Every successful lease/reservation is released on all return paths.
+One worker lease includes the caller. dav1d decode and libavif's row-split
+RGB conversion share one automatic count, `DecodeThreads(pixels, format)`:
+4:2:0 frames below `THREADED_MIN_PIXELS_420` (8388608, 8 MiP) and other
+frames below `THREADED_MIN_PIXELS` (2097152, 2 MiP) use one thread; larger
+frames use `AutoThreads()`, the process's usable cores (affinity mask; Windows
+active processors; macOS online cores) clamped to 1..`AUTO_THREADS` (4). The
+thresholds are measured: on an 8x Cortex-A53 phone, threading slowed smaller
+frames by up to 2.7x. Thread count never changes output bytes.
+libaom is built without multithreading. Every successful lease/reservation is
+released on all return paths.
 Cancellation is checked before work, after parse, after full-frame decode,
 after conversion and once per transformed output row. Native parse/decode and
 conversion calls cannot be interrupted. The shared cancellation flag is
@@ -102,12 +116,16 @@ return `UnsupportedCapability` before create/defaults/record access. All table
 slots must be present. Pinned-header sizeof/offsetof tests cover touched fields.
 This ABI is not claimed compatible with libavif1.4 or arbitrary system builds.
 
-`DecodeWithAPI(api,input,options,codec=1)` returns the normal owned result.
-`BridgeProbe(api,input,options,codec=1)` returns `ProbeResult {is_ok,metadata,error}`
-from a bounded container parse, without decoding or allocating pixel planes.
-`DecodeIntoWithAPI(api,input,output,options,codec=1)` returns
-`DecodeIntoResult {is_ok,metadata,error,output_may_be_modified}`. Codec1 selects
-AOM, codec2 dav1d, and unavailable choices explicitly fail. Static hosts obtain
+`DecodeWithAPI(api,input,options,codec=CodecDav1d,threads=0)` returns the
+normal owned result. `BridgeProbe(api,input,options,codec=CodecDav1d)` returns
+`ProbeResult {is_ok,metadata,error}` from a bounded container parse, without
+decoding or allocating pixel planes.
+`DecodeIntoWithAPI(api,input,output,options,codec=CodecDav1d,threads=0)` returns
+`DecodeIntoResult {is_ok,metadata,error,output_may_be_modified}`.
+`CodecLibaom` (1) and `CodecDav1d` (2) are the only choices; others, and a
+library built without the chosen codec, explicitly fail with
+`UnsupportedCapability`. `threads=0` applies `DecodeThreads`; 1..8 is an
+explicit count for both stages and anything else is rejected before decoding. Static hosts obtain
 an equivalent table with `StaticNativeAPI()` from `avif/api`; they explicitly
 link artifact outputs. The package has no unconditional native link libraries.
 

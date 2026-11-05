@@ -12,6 +12,9 @@ EngineCapabilities :: struct {
     hard_scratch_limit: bool
     max_threads: s32
 }
+// A native decode may fan out to at most this many threads inside its single
+// worker lease. Engines declare their bound; zero or larger bounds reject.
+MAX_DECODE_THREADS :: 8
 ContainerDecode :: #type (input: BorrowedBytes, options: *DecodeOptions) -> DecodeResult;
 Av1Engine :: struct { name: string; capabilities: EngineCapabilities; decode_container: ContainerDecode; }
 
@@ -21,7 +24,8 @@ DecodeWithEngine :: (engine: Av1Engine, input: BorrowedBytes, options: *DecodeOp
     error = ValidateInputSize(input.data.count, options.limits)
     if error.code != DecodeOK { return DecodeFailure(error) }
     if !engine.capabilities.container_bridge || !engine.capabilities.strict_rgba8 ||
-       engine.capabilities.max_threads != 1 || engine.decode_container == null ||
+       engine.capabilities.max_threads < 1 || engine.capabilities.max_threads > MAX_DECODE_THREADS ||
+       engine.decode_container == null ||
        options.color_mode != StrictColor { return DecodeFailure(Error(UnsupportedCapability)) }
     error = ValidateDecodedFrames(1, options.limits)
     if error.code != DecodeOK { return DecodeFailure(error) }

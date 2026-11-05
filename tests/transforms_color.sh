@@ -11,7 +11,7 @@ if ! test -f "$base/lib/libavif.a" || ! test -f "$base/lib/libaom.a"; then
     base=$(dirname "$artifact")
 fi
 headers=$("$ziran" pkg path libavif)
-"${CC:-cc}" -std=c11 -O2 -I"$headers/include" tests/color_oracle.c "$base/lib/libavif.a" "$base/lib/libaom.a" -lm -o "$out/color_oracle"
+"${CC:-cc}" -std=c11 -O2 -I"$headers/include" tests/color_oracle.c "$base/lib/libavif.a" "$base/lib/libaom.a" -lpthread -ldl -lm -o "$out/color_oracle"
 "$out/color_oracle" >"$out/oracle.txt"
 python3 tests/color_oracle.py "$out/oracle.txt" "$out/color_cases.zi"
 "$ziran" ir --root tests --module-path "$out" --module-path "$root/src" --module-path "image_codec=$foundation/src" --module-path "std=$toolchain/std" -o "$out/ir" tests/transforms_color.zi
