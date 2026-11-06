@@ -13,7 +13,8 @@ result := Decode(BorrowBytes(bytes), options)
 ```
 
 From a consumer, add `https://github.com/ziranlang/avif.git` with `ziran add`.
-The manifest pins libavif, dav1d (the default engine) and libaom (the oracle) source packages. Local
+The manifest pins libavif, dav1d (the default engine) and libaom (the oracle) source packages, plus the
+av1 package with the authored AV1 decoder. Local
 canonical checkout overrides belong in ignored `ziran.local.toml`. Production lockfiles resolve committed package and toolchain revisions.
 
 Run the package suite in this checkout:

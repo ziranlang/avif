@@ -1,7 +1,8 @@
 # AVIF implementation receipt
 
-The stable public facade uses the pinned libavif bridge. The separate authored
-AV1 decoder remains in development and is outside this publication. The
+The stable public facade uses the pinned libavif bridge. The authored AV1
+decoder lives in the separate av1 package, remains in development and is
+outside this publication. The
 receipts below describe local tests with recorded source identities; they do
 not establish GitHub checks, a release or installation.
 

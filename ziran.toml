@@ -5,7 +5,7 @@ entry = "tools/avif.zi"
 
 [toolchain]
 git = "https://github.com/ziranlang/ziran.git"
-ref = "1d616e3a1761dd4e4a1c5a960c165d30ba16da29"
+ref = "03e01d08d9f12a68693294a3bd12f6c758290e45"
 
 [exports]
 api = "src/api.zi"
@@ -32,7 +32,11 @@ source = true
 
 [dependencies.image_codec]
 git = "https://github.com/ziranlang/image-codec.git"
-ref = "a8767d78d0c08d5b1c1fc0bab6fcafdc7a6da930"
+ref = "360553150917f352e49e1beb78917370792ccaef"
+
+[dependencies.av1]
+git = "https://github.com/ziranlang/av1.git"
+ref = "c872ae37d55f73e57984f6605b43e56f818576e7"
 
 [dependencies.dav1d]
 git = "https://github.com/videolan/dav1d.git"

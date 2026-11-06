@@ -18,9 +18,11 @@ ref = "master"
 git = "https://github.com/ziranlang/avif.git"
 ref = "master"
 TOML
+av1_package=${AV1_PACKAGE_ROOT:-$("$ziran" pkg path av1)}
 cat > "$consumer/ziran.local.toml" <<TOML
 [overrides]
 avif = "$root"
+av1 = "$av1_package"
 image_codec = "$foundation"
 ziran = "$toolchain"
 TOML
@@ -42,4 +44,6 @@ sh tests/container.sh
 sh tests/dynamic.sh
 sh tests/native_recipe.sh
 sh tests/transforms_color.sh
+# Authored AV1 decode of every fixture item through the container parser.
+sh tests/av1_fixtures.sh
 printf '%s\n' 'AVIF package: package resolution, native recipe and core passed'

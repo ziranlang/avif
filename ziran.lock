@@ -2,6 +2,15 @@
   "format": 1,
   "packages": [
     {
+      "commit": "c872ae37d55f73e57984f6605b43e56f818576e7",
+      "dependencies": {"dav1d": "pb24767b9eb34d961", "image_codec": "p69c0e968ae5735d9", "libaom": "pfba2650e0a73c0ea"},
+      "dependency_refs": {"dav1d": "54706fc6bc0cdecab7e9593974a4039cc038fca7", "image_codec": "360553150917f352e49e1beb78917370792ccaef", "libaom": "d772e334cc724105040382a977ebb10dfd393293"},
+      "id": "p445e2473b3417060",
+      "name": "av1",
+      "ref": "c872ae37d55f73e57984f6605b43e56f818576e7",
+      "url": "https://github.com/ziranlang/av1.git"
+    },
+    {
       "commit": "1aadfad932c98c069a1204261b1856f81f3bc199",
       "dependencies": {},
       "id": "p57c0272208aae8db",
@@ -11,6 +20,14 @@
       "url": "https://github.com/AOMediaCodec/libavif.git"
     },
     {
+      "commit": "360553150917f352e49e1beb78917370792ccaef",
+      "dependencies": {},
+      "id": "p69c0e968ae5735d9",
+      "name": "image-codec",
+      "ref": "360553150917f352e49e1beb78917370792ccaef",
+      "url": "https://github.com/ziranlang/image-codec.git"
+    },
+    {
       "commit": "54706fc6bc0cdecab7e9593974a4039cc038fca7",
       "dependencies": {},
       "id": "pb24767b9eb34d961",
@@ -18,14 +35,6 @@
       "ref": "54706fc6bc0cdecab7e9593974a4039cc038fca7",
       "source": true,
       "url": "https://github.com/videolan/dav1d.git"
-    },
-    {
-      "commit": "a8767d78d0c08d5b1c1fc0bab6fcafdc7a6da930",
-      "dependencies": {},
-      "id": "pf881ecd979d92258",
-      "name": "image-codec",
-      "ref": "a8767d78d0c08d5b1c1fc0bab6fcafdc7a6da930",
-      "url": "https://github.com/ziranlang/image-codec.git"
     },
     {
       "commit": "d772e334cc724105040382a977ebb10dfd393293",
@@ -38,13 +47,13 @@
     }
   ],
   "root": {
-    "dependencies": {"dav1d": "pb24767b9eb34d961", "image_codec": "pf881ecd979d92258", "libaom": "pfba2650e0a73c0ea", "libavif": "p57c0272208aae8db"},
-    "dependency_refs": {"dav1d": "54706fc6bc0cdecab7e9593974a4039cc038fca7", "image_codec": "a8767d78d0c08d5b1c1fc0bab6fcafdc7a6da930", "libaom": "d772e334cc724105040382a977ebb10dfd393293", "libavif": "1aadfad932c98c069a1204261b1856f81f3bc199"},
+    "dependencies": {"av1": "p445e2473b3417060", "dav1d": "pb24767b9eb34d961", "image_codec": "p69c0e968ae5735d9", "libaom": "pfba2650e0a73c0ea", "libavif": "p57c0272208aae8db"},
+    "dependency_refs": {"av1": "c872ae37d55f73e57984f6605b43e56f818576e7", "dav1d": "54706fc6bc0cdecab7e9593974a4039cc038fca7", "image_codec": "360553150917f352e49e1beb78917370792ccaef", "libaom": "d772e334cc724105040382a977ebb10dfd393293", "libavif": "1aadfad932c98c069a1204261b1856f81f3bc199"},
     "name": "avif"
   },
   "toolchain": {
-    "commit": "1d616e3a1761dd4e4a1c5a960c165d30ba16da29",
-    "ref": "1d616e3a1761dd4e4a1c5a960c165d30ba16da29",
+    "commit": "d17fa57e35b04936117e56de4272d5e70011cb1b",
+    "ref": "03e01d08d9f12a68693294a3bd12f6c758290e45",
     "url": "https://github.com/ziranlang/ziran.git"
   }
 }
