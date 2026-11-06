@@ -7,11 +7,12 @@ out="$root/build/scratch/av1-fixtures"
 mkdir -p "$out"
 av1=${AV1_PACKAGE_ROOT:-$("$ziran" pkg path av1)}
 aom=${AV1_AOM_SOURCE:-$("$ziran" pkg path libaom)}
-# Test-only oracle library: the av1 package's pinned libaom build, made there
-# by its tests/common.sh when missing.
+# Test-only oracle library: tests/avif.sh passes the pinned libaom of this
+# package's native artifact; alone, AV1_AOM_LIBRARY or the av1 package's own
+# pinned build.
 library=${AV1_AOM_LIBRARY:-$av1/build/native/aom/libaom.a}
 if test ! -f "$library"; then
-    printf 'Missing pinned libaom oracle %s; run sh tests/av1_obu_range.sh in the av1 package first\n' "$library" >&2
+    printf 'Missing pinned libaom oracle %s; run sh tests/avif.sh or set AV1_AOM_LIBRARY\n' "$library" >&2
     exit 1
 fi
 python3 tests/av1_fixtures_oracle.py --root "$root" --av1 "$av1" --out "$out" --aom "$aom" --library "$library"

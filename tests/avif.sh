@@ -44,6 +44,7 @@ sh tests/container.sh
 sh tests/dynamic.sh
 sh tests/native_recipe.sh
 sh tests/transforms_color.sh
-# Authored AV1 decode of every fixture item through the container parser.
-sh tests/av1_fixtures.sh
+# Authored AV1 decode of every fixture item through the container parser,
+# against the pinned libaom this package's native artifact links.
+AV1_AOM_LIBRARY="${AV1_AOM_LIBRARY:-$base/lib/libaom.a}" sh tests/av1_fixtures.sh
 printf '%s\n' 'AVIF package: package resolution, native recipe and core passed'
