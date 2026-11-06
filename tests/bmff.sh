@@ -12,5 +12,5 @@ for form in source saved; do
     "$out/$form/bmff_contract"
     "$ziran" bundle --entry bmff_contract:main "$@" -o "$out/$form.zx" "$input"
     test "$("$ziran" run "$out/$form.zx")" = 0
-    test "$("$toolchain/build/bin/zi2zx-vm" run "$out/$form.zx")" = 0
+    test "$("$toolchain/build/bin/zi2zx" run --vm "$out/$form.zx")" = 0
 done

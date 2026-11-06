@@ -5,7 +5,7 @@ entry = "tools/avif.zi"
 
 [toolchain]
 git = "https://github.com/ziranlang/ziran.git"
-ref = "03e01d08d9f12a68693294a3bd12f6c758290e45"
+ref = "5fe70de6960b2fb8f01164c6643687adfba94156"
 
 [exports]
 api = "src/api.zi"

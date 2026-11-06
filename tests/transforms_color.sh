@@ -24,7 +24,7 @@ for form in source saved; do
     "$out/$form-c/transforms_color"
     if nm -u "$out/$form-c/transforms_color" | rg -q 'avif|aom|dav1d'; then exit 1; fi
     "$ziran" bundle --entry transforms_color:main "$@" -o "$out/$form.zx" "$input"
-    "$toolchain/build/bin/zi2zx-vm" run "$out/$form.zx" >"$out/$form-vm.txt"
+    "$toolchain/build/bin/zi2zx" run --vm "$out/$form.zx" >"$out/$form-vm.txt"
     tail -n 1 "$out/$form-vm.txt" | rg -q '^0$'
     LDLIBS= "$ziran" build --target=go --pkg main --exe --entry transforms_color:main "$@" -o "$out/$form-go" "$input"
     if (cd "$out/$form-go"; CGO_ENABLED=0 GO111MODULE=off GOWORK=off GOMAXPROCS=1 go build -p=1 -o transforms_color .); then

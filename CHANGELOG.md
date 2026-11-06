@@ -6,3 +6,4 @@
 - dav1d is the default engine, with its runtime-dispatched assembly and a measured bounded thread policy; libaom stays the explicit oracle, and every target converts bit-exactly.
 - The authored AV1 decoder moved to the new av1 package, which avif now depends on.
 - libaom, the oracle engine, is pinned at 3.15.3.
+- Tests run bundles on the portable VM with `zi2zx run --vm`.

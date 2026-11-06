@@ -12,6 +12,6 @@ for form in source saved; do
     "$out/$form/engine_contract"
     "$ziran" bundle --entry engine_contract:main "$@" -o "$out/$form.zx" "$input"
     test "$("$ziran" run "$out/$form.zx")" = 0
-    test "$("$toolchain/build/bin/zi2zx-vm" run "$out/$form.zx")" = 0
+    test "$("$toolchain/build/bin/zi2zx" run --vm "$out/$form.zx")" = 0
 done
 printf '%s\n' 'AVIF fake-engine contracts: source/saved IR native C and explicit portable VM passed'
