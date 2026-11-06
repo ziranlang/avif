@@ -12,6 +12,9 @@ no-static-link dlopen loader, source/saved IR and all17 frozen native goldens.
 The final combined run of `sh tests/bridges.sh` plus the benchmark also
 completed successfully under build-queue with pinned
 libavif1.3.0, AOM3.13.1 and dav1d1.5.4. Old fixtures/goldens were preserved.
+On 2026-11-06 the libaom pin moved to 3.15.3; `build-queue -- sh tests/avif.sh`
+passed again with both engines and the same frozen goldens. The benchmark below
+was measured at AOM3.13.1 and has not been rerun.
 The final suite includes the bounded scratch probe and scalar multi-target tests.
 Exact final command and source identities: `receipts/integration-continuation.json`.
 

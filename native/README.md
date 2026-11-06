@@ -4,8 +4,8 @@ Package source pins (resolved through `ziran add --source --ref COMMIT`):
 
 - libavif 1.3.0: https://github.com/AOMediaCodec/libavif.git,
   `1aadfad932c98c069a1204261b1856f81f3bc199` (BSD-2-Clause).
-- libaom 3.13.1: https://aomedia.googlesource.com/aom,
-  `d772e334cc724105040382a977ebb10dfd393293` (BSD-2-Clause and patent grant).
+- libaom 3.15.3: https://aomedia.googlesource.com/aom,
+  `b141d9c45db236335351c8a4b2a14b3ade27c937` (BSD-2-Clause and patent grant).
 - dav1d 1.5.4: https://github.com/videolan/dav1d.git,
   `54706fc6bc0cdecab7e9593974a4039cc038fca7` (BSD-2-Clause).
 

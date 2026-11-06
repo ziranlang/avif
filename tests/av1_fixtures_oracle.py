@@ -14,7 +14,7 @@ from pathlib import Path
 import shlex
 import subprocess
 
-PIN='d772e334cc724105040382a977ebb10dfd393293'
+PIN='b141d9c45db236335351c8a4b2a14b3ade27c937'
 NAMES=['rgba8','rgba10','rgba12','gray8','gray10','gray12','transform00','transform01','transform10','transform11',
     'transform20','transform21','transform30','transform31','premultiplied','opaque','animated']
 HOST=r'''

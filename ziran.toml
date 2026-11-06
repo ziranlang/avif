@@ -27,7 +27,7 @@ source = true
 
 [dependencies.libaom]
 git = "https://aomedia.googlesource.com/aom"
-ref = "d772e334cc724105040382a977ebb10dfd393293"
+ref = "b141d9c45db236335351c8a4b2a14b3ade27c937"
 source = true
 
 [dependencies.image_codec]
@@ -36,7 +36,7 @@ ref = "360553150917f352e49e1beb78917370792ccaef"
 
 [dependencies.av1]
 git = "https://github.com/ziranlang/av1.git"
-ref = "c872ae37d55f73e57984f6605b43e56f818576e7"
+ref = "bd278217e2bac754d868b3d6502eac4257658d4b"
 
 [dependencies.dav1d]
 git = "https://github.com/videolan/dav1d.git"

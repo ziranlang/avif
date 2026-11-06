@@ -2,15 +2,6 @@
   "format": 1,
   "packages": [
     {
-      "commit": "c872ae37d55f73e57984f6605b43e56f818576e7",
-      "dependencies": {"dav1d": "pb24767b9eb34d961", "image_codec": "p69c0e968ae5735d9", "libaom": "pfba2650e0a73c0ea"},
-      "dependency_refs": {"dav1d": "54706fc6bc0cdecab7e9593974a4039cc038fca7", "image_codec": "360553150917f352e49e1beb78917370792ccaef", "libaom": "d772e334cc724105040382a977ebb10dfd393293"},
-      "id": "p445e2473b3417060",
-      "name": "av1",
-      "ref": "c872ae37d55f73e57984f6605b43e56f818576e7",
-      "url": "https://github.com/ziranlang/av1.git"
-    },
-    {
       "commit": "1aadfad932c98c069a1204261b1856f81f3bc199",
       "dependencies": {},
       "id": "p57c0272208aae8db",
@@ -18,6 +9,15 @@
       "ref": "1aadfad932c98c069a1204261b1856f81f3bc199",
       "source": true,
       "url": "https://github.com/AOMediaCodec/libavif.git"
+    },
+    {
+      "commit": "bd278217e2bac754d868b3d6502eac4257658d4b",
+      "dependencies": {"dav1d": "pb24767b9eb34d961", "image_codec": "p69c0e968ae5735d9", "libaom": "p74ab3cb6eb3b86fa"},
+      "dependency_refs": {"dav1d": "54706fc6bc0cdecab7e9593974a4039cc038fca7", "image_codec": "360553150917f352e49e1beb78917370792ccaef", "libaom": "b141d9c45db236335351c8a4b2a14b3ade27c937"},
+      "id": "p5d7d12505a42f7b3",
+      "name": "av1",
+      "ref": "bd278217e2bac754d868b3d6502eac4257658d4b",
+      "url": "https://github.com/ziranlang/av1.git"
     },
     {
       "commit": "360553150917f352e49e1beb78917370792ccaef",
@@ -28,6 +28,15 @@
       "url": "https://github.com/ziranlang/image-codec.git"
     },
     {
+      "commit": "b141d9c45db236335351c8a4b2a14b3ade27c937",
+      "dependencies": {},
+      "id": "p74ab3cb6eb3b86fa",
+      "name": "libaom",
+      "ref": "b141d9c45db236335351c8a4b2a14b3ade27c937",
+      "source": true,
+      "url": "https://aomedia.googlesource.com/aom"
+    },
+    {
       "commit": "54706fc6bc0cdecab7e9593974a4039cc038fca7",
       "dependencies": {},
       "id": "pb24767b9eb34d961",
@@ -35,24 +44,15 @@
       "ref": "54706fc6bc0cdecab7e9593974a4039cc038fca7",
       "source": true,
       "url": "https://github.com/videolan/dav1d.git"
-    },
-    {
-      "commit": "d772e334cc724105040382a977ebb10dfd393293",
-      "dependencies": {},
-      "id": "pfba2650e0a73c0ea",
-      "name": "libaom",
-      "ref": "d772e334cc724105040382a977ebb10dfd393293",
-      "source": true,
-      "url": "https://aomedia.googlesource.com/aom"
     }
   ],
   "root": {
-    "dependencies": {"av1": "p445e2473b3417060", "dav1d": "pb24767b9eb34d961", "image_codec": "p69c0e968ae5735d9", "libaom": "pfba2650e0a73c0ea", "libavif": "p57c0272208aae8db"},
-    "dependency_refs": {"av1": "c872ae37d55f73e57984f6605b43e56f818576e7", "dav1d": "54706fc6bc0cdecab7e9593974a4039cc038fca7", "image_codec": "360553150917f352e49e1beb78917370792ccaef", "libaom": "d772e334cc724105040382a977ebb10dfd393293", "libavif": "1aadfad932c98c069a1204261b1856f81f3bc199"},
+    "dependencies": {"av1": "p5d7d12505a42f7b3", "dav1d": "pb24767b9eb34d961", "image_codec": "p69c0e968ae5735d9", "libaom": "p74ab3cb6eb3b86fa", "libavif": "p57c0272208aae8db"},
+    "dependency_refs": {"av1": "bd278217e2bac754d868b3d6502eac4257658d4b", "dav1d": "54706fc6bc0cdecab7e9593974a4039cc038fca7", "image_codec": "360553150917f352e49e1beb78917370792ccaef", "libaom": "b141d9c45db236335351c8a4b2a14b3ade27c937", "libavif": "1aadfad932c98c069a1204261b1856f81f3bc199"},
     "name": "avif"
   },
   "toolchain": {
-    "commit": "d17fa57e35b04936117e56de4272d5e70011cb1b",
+    "commit": "33feafff5d1681902f8000672c9d4c9c2a3b4aa8",
     "ref": "03e01d08d9f12a68693294a3bd12f6c758290e45",
     "url": "https://github.com/ziranlang/ziran.git"
   }
