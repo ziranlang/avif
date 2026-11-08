@@ -19,6 +19,12 @@ Sources are read through package resolution; no downstream vendor files are
 edited. Outputs and SHA-256 descriptors are published by Ziran's native recipe
 cache.
 
+`link.txt` uses Ziran's typed descriptor rows: `archive` followed by a tab and
+the relative archive path, then `library` followed by a tab and each system
+link flag. Archive order is libavif then libaom, followed by pthread, dl and m.
+The package suite requests the real artifact, parses its verified descriptor
+through the toolchain consumer, links the archives and executes the result.
+
 The artifact CLI accepts only `linux-x86_64-gnu`; other platforms fail
 explicitly and are built through the CMake function below. Every build is
 decode-only, with no libyuv/libsharpyuv and no encoders/apps/examples/tests.

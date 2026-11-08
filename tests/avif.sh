@@ -31,6 +31,27 @@ native=$(cd "$consumer"; "$ziran" pkg artifact avif:native --platform linux-x86_
 base=$(dirname "$native")
 export LDLIBS="$base/lib/libavif.a $base/lib/libaom.a -lpthread -ldl -lm"
 printf '%s\n' "$native" >"$out/native-artifact.txt"
+# Exercise the toolchain's descriptor parser and ordered native link flags.
+cat >"$out/artifact-link.c" <<'C'
+extern const char *avifVersion(void);
+int main(void) { return avifVersion() == 0; }
+C
+python3 - "$toolchain" "$native" "$out" <<'PY'
+import importlib.util
+from pathlib import Path
+import subprocess
+import sys
+toolchain, descriptor, out = map(Path, sys.argv[1:])
+spec = importlib.util.spec_from_file_location('ziran_artifacts', toolchain/'scripts/ziran_artifacts.py')
+module = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(module)
+artifact = module.Artifact(descriptor, artifact='native', platform='linux-x86_64-gnu')
+flags = artifact.link_flags()
+assert flags == [str(artifact.output('lib/libavif.a')), str(artifact.output('lib/libaom.a')),
+                 '-lpthread', '-ldl', '-lm'], flags
+subprocess.run(['cc', str(out/'artifact-link.c'), '-o', str(out/'artifact-link'), *flags], check=True)
+subprocess.run([str(out/'artifact-link')], check=True)
+PY
 # dav1d is the default engine; libaom is the explicit oracle. Both must pass.
 AVIF_LIB_DIR="$base/lib" AVIF_ENGINE=dav1d sh tests/bridge_core.sh
 AVIF_LIB_DIR="$base/lib" AVIF_ENGINE=libaom sh tests/bridge_core.sh

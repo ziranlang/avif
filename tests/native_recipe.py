@@ -79,7 +79,9 @@ _ziran_avif_source(libavif "${AVIF_SOURCE}" 000000000000000000000000000000000000
     first = ctx.Process(target=lock_worker,args=(ROOT,*events[:3]))
     second = ctx.Process(target=lock_worker,args=(ROOT,*events[3:]))
     try:
-        first.start(); assert events[0].wait(10) and events[1].wait(10)
+        first.start()
+        assert events[0].wait(10), f'first lock worker did not start: exit={first.exitcode}'
+        assert events[1].wait(10), f'first lock worker did not acquire recipe lock: exit={first.exitcode}'
         second.start(); assert events[3].wait(10)
         assert not events[4].wait(0.2), 'recipe lock allowed overlapping consumers'
         events[2].set(); assert events[4].wait(10)

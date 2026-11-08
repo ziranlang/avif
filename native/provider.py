@@ -119,7 +119,8 @@ def stage_artifact(out, a, root, build, sources, pins):
         'sources': pins, 'versions': VERSIONS, 'threads': THREADS,
         'dav1d': {'asm': True, 'cpu_dispatch': 'runtime', 'merged_into': 'lib/libavif.a'},
         'encoder': False, 'libyuv': False, 'libsharpyuv': False}, indent=2)+'\n')
-    (out/'link.txt').write_text('lib/libavif.a\nlib/libaom.a\n-lpthread\n-ldl\n-lm\n')
+    (out/'link.txt').write_text('archive\tlib/libavif.a\narchive\tlib/libaom.a\n'
+                                'library\t-lpthread\nlibrary\t-ldl\nlibrary\t-lm\n')
 
 if __name__ == '__main__':
     main()
