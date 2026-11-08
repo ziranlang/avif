@@ -52,6 +52,7 @@ assert flags == [str(artifact.output('lib/libavif.a')), str(artifact.output('lib
 subprocess.run(['cc', str(out/'artifact-link.c'), '-o', str(out/'artifact-link'), *flags], check=True)
 subprocess.run([str(out/'artifact-link')], check=True)
 PY
+python3 tests/native_bootstrap.py
 # dav1d is the default engine; libaom is the explicit oracle. Both must pass.
 AVIF_LIB_DIR="$base/lib" AVIF_ENGINE=dav1d sh tests/bridge_core.sh
 AVIF_LIB_DIR="$base/lib" AVIF_ENGINE=libaom sh tests/bridge_core.sh

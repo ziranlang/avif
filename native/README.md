@@ -95,13 +95,15 @@ root artifact command. The tests create this consumer inside ignored build
 intermediates without requiring an empty bootstrap commit.
 
 Every native build needs Meson and Ninja for dav1d, plus NASM on x86. The
-artifact recipe uses the exact Python build tools in `requirements.txt`;
+artifact recipe uses the exact Python build tools in `requirements.txt`.
+Building the package project tool first installs these pinned tools into
+`build/native-tools`, including on a fresh consumer with no existing tools.
 CMake consumers use `ZIRAN_AVIF_TOOLS` (variable or environment) naming such a
 directory, else this checkout's `build/native-tools`, else Meson and Ninja on
-`PATH`. Install missing build-only tools explicitly (nothing is fetched):
+`PATH`. CMake consumers can prepare the same build-only tools explicitly:
 
 ```sh
-build-queue -- python3 -m pip install --target build/native-tools -r native/requirements.txt
+build-queue -- make native-tools
 ```
 
 No global Python environment or system packages are changed. Native artifacts

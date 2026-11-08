@@ -2,6 +2,7 @@
 
 ## [Unreleased]
 
+- Native artifact project tools prepare pinned Meson and Ninja on fresh consumers.
 - Headless AVIF APIs and command, bounded container policy and pinned native libavif/libaom artifacts with verification fixtures.
 - dav1d is the default engine, with its runtime-dispatched assembly and a measured bounded thread policy; libaom stays the explicit oracle, and every target converts bit-exactly.
 - The authored AV1 decoder moved to the new av1 package, which avif now depends on.
