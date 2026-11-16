@@ -18,10 +18,12 @@ main :: (argc: s32, argv: **u8) -> s32 {
     result := LanczosRGBA8Into(source,7,5,OutputBuffer.{identity[:],28},options)
     if !result.is_ok { return 1 }
     for i: 0..139 { if identity[i] != pixels[i] { return 2 } }
+    // Half of the 2x1 source is transparent, so the alpha is exactly 127.5
+    // and a last-bit difference in the filter sums rounds it either way.
     edge: [8]u8 = .[255,0,0,0,0,0,255,255]
     filtered: [4]u8
     result = LanczosRGBA8Into(RgbaView.{2,1,8,edge[:]},1,1,OutputBuffer.{filtered[:],4},options)
-    if !result.is_ok || filtered[0] != cast(u8)0 || filtered[2] != cast(u8)255 || filtered[3] != cast(u8)128 { return 3 }
+    if !result.is_ok || filtered[0] != cast(u8)0 || filtered[2] != cast(u8)255 || filtered[3] < cast(u8)127 || filtered[3] > cast(u8)128 { return 3 }
     result = LanczosRGBA8Into(source,7,5,OutputBuffer.{pixels[:],28},options)
     if result.is_ok || result.error.code != InvalidInput || result.output_may_be_modified { return 4 }
     cancellation: Cancellation; cancellation.requested = true; options.cancellation = *cancellation

@@ -4,8 +4,10 @@ main :: () -> s32 {
     pixels: [8]u8 = .[255,0,0,0,0,0,255,255]
     output: [8]u8
     options := DefaultOptions(); budget := NewWorkerBudget(options.limits); options.workers = *budget
+    // Half of the 2x1 source is transparent, so the alpha is exactly 127.5
+    // and a last-bit difference in the filter sums rounds it either way.
     result := LanczosRGBA8Into(RgbaView.{2,1,8,pixels[:]},1,1,OutputBuffer.{output[:],4},options)
-    if !result.is_ok || output[0] != cast(u8)0 || output[2] != cast(u8)255 || output[3] != cast(u8)128 || budget.active_workers != 0 || budget.working_bytes != 0 { return 1 }
+    if !result.is_ok || output[0] != cast(u8)0 || output[2] != cast(u8)255 || output[3] < cast(u8)127 || output[3] > cast(u8)128 || budget.active_workers != 0 || budget.working_bytes != 0 { return 1 }
     result = LanczosRGBA8Into(RgbaView.{2,1,8,pixels[:]},2,1,OutputBuffer.{output[:],8},options)
     if !result.is_ok { return 2 }
     for i: 0..7 { if output[i] != pixels[i] { return 3 } }
