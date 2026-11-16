@@ -33,7 +33,7 @@ Implemented integration:
 - Failed OBU extraction now returns its error instead of recursively invoking
   ItemFailure. Tests cover exact capacity, exact working ceiling, ceiling-1 and
   missing-item rejection, alongside all17 pinned OBU pairs and malformed graphs.
-- `native/ZiranAvif.cmake` provides one pinned decoder-only recipe and complete
+- `native/ZiranAvif.cmake` provides one pinned decode/encode recipe and complete
   `ziran_avif::static` link target. Linux/Android policy and ARMv7 NEON-off
   alignment-safe kernels match the frozen recipe. Custom real shared target
   names preserve existing consumers. Native artifact recipes serialize shared
@@ -98,3 +98,20 @@ Persistent benchmark receipts: `receipts/tiny-comparison.json` and
 and output hashes, CPU/allowed CPUs, samples, process CPU and peak RSS.
 Allocator counts and energy are unmeasured in those benchmarks. The Jungle
 input is local-only and is not redistributed.
+
+## Still-image encoding and Lanczos preview (2026-11-10)
+
+The full AVIF package suite, standalone BMFF suite and Kryon image-preview
+gate passed locally with the canonical development compiler. Encoder tests
+cover qualities 1/35/100, exact alpha, ICC/Exif/XMP, all eight orientations,
+quality-100 exact RGBA and explicit unsupported-input failures. Native and
+portable Lanczos tests include an independent two-dimensional pixel oracle.
+
+Finalization is blocked by the pinned compiler: an actual consumer rejects
+imported `bytes` and `pixels` fields even though the facade-only check passes.
+The required generic-type identity fix remains uncommitted in Ziran
+`cmd/zir/zir_check_value.c`. The original toolchain pin and lock are preserved.
+These package changes remain uncommitted and unpushed until a committed
+compiler fix passes the locked consumer tests. No release or installation is
+claimed. Exact commands, outcomes and source identities are recorded in
+[the encoding receipt](receipts/encode-progress.json).

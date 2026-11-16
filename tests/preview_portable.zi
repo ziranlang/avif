@@ -1,0 +1,18 @@
+#import "avif/preview"
+#program_export
+main :: () -> s32 {
+    pixels: [8]u8 = .[255,0,0,0,0,0,255,255]
+    output: [8]u8
+    options := DefaultOptions(); budget := NewWorkerBudget(options.limits); options.workers = *budget
+    result := LanczosRGBA8Into(RgbaView.{2,1,8,pixels[:]},1,1,OutputBuffer.{output[:],4},options)
+    if !result.is_ok || output[0] != cast(u8)0 || output[2] != cast(u8)255 || output[3] != cast(u8)128 || budget.active_workers != 0 || budget.working_bytes != 0 { return 1 }
+    result = LanczosRGBA8Into(RgbaView.{2,1,8,pixels[:]},2,1,OutputBuffer.{output[:],8},options)
+    if !result.is_ok { return 2 }
+    for i: 0..7 { if output[i] != pixels[i] { return 3 } }
+    result = LanczosRGBA8Into(RgbaView.{2,1,8,pixels[:]},2,1,OutputBuffer.{pixels[:],8},options)
+    if result.is_ok || result.error.code != InvalidInput || result.output_may_be_modified { return 4 }
+    cancellation: Cancellation; cancellation.requested = true; options.cancellation = *cancellation
+    result = LanczosRGBA8Into(RgbaView.{2,1,8,pixels[:]},1,1,OutputBuffer.{output[:],4},options)
+    if result.is_ok || result.error.code != DecodeCancelled || result.output_may_be_modified { return 5 }
+    return 0
+}

@@ -1,0 +1,10 @@
+API :: #import "avif/api"
+Encoding :: #import "avif/encode"
+PublicEncoding :: struct { metadata: API.EncodeMetadata; options: API.EncodeOptions; result: API.EncodeResult; }
+DirectEncoding :: struct { metadata: Encoding.EncodeMetadata; options: Encoding.EncodeOptions; result: Encoding.EncodeResult; }
+#program_export
+main :: () -> s32 {
+    facade: PublicEncoding; direct: DirectEncoding
+    facade.metadata = API.DefaultEncodeMetadata(); direct.metadata = Encoding.DefaultEncodeMetadata()
+    return ifx facade.metadata.orientation == direct.metadata.orientation then 0 else 1
+}

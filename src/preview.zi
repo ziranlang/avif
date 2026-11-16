@@ -1,0 +1,110 @@
+// Headless, explicit Lanczos-3 resize of straight RGBA8. Encoding never calls this implicitly.
+using Output :: #import "output"
+#import "std/math"
+#scope_file
+PreviewFloor :: (value: float64) -> s32 {
+    integer := cast(s32)value
+    return ifx cast(float64)integer > value then integer - 1 else integer
+}
+LanczosWeight :: (value: float64) -> float64 {
+    x := ifx value < 0.0 then -value else value
+    if x < 0.000000000001 { return 1.0 }
+    if x >= 3.0 { return 0.0 }
+    angle := x * 3.14159265358979323846
+    return Sin(angle) * Sin(angle / 3.0) * 3.0 / (angle * angle)
+}
+PreviewByte :: (value: float64) -> u8 {
+    if value <= 0.0 { return 0 }
+    if value >= 255.0 { return 255 }
+    return cast(u8)(value + 0.5)
+}
+#scope_export
+LanczosRGBA8Into :: (source: RgbaView, width: s32, height: s32, output: OutputBuffer, options: DecodeOptions) -> PixelWriteResult {
+    error := ValidateOptions(*options)
+    if error.code == DecodeOK { error = ValidateRgba(source, options.limits) }
+    if error.code == DecodeOK { error = ValidateOutput(output, width, height, options.limits) }
+    if error.code != DecodeOK { return PixelFailure(error) }
+    if source.width > 32768 || source.height > 32768 || width > 32768 || height > 32768 ||
+       cast(s64)source.width * source.height > 67108864 || cast(s64)width * height > 67108864 { return PixelFailure(Error(LimitExceeded)) }
+    if ByteRangesOverlap(source.data, output.data) { return PixelFailure(Error(InvalidInput)) }
+    // Four float64 premultiplied channels, retained between separable passes.
+    count := cast(s64)width * source.height * 4
+    identity := width == source.width && height == source.height
+    working := ifx identity then cast(s64)0 else count * 8
+    if working > options.limits.max_working_bytes { return PixelFailure(Error(LimitExceeded)) }
+    acquired := false; reserved := false
+    if options.workers != null {
+        error = AcquireWorker(options.workers, options.cancellation)
+        if error.code != DecodeOK { return PixelFailure(error) }
+        acquired = true
+    }
+    defer { if acquired { unused ReleaseWorker(options.workers) } }
+    if acquired && working > 0 {
+        error = ReserveWorkingBytes(options.workers, working, options.cancellation)
+        if error.code != DecodeOK { return PixelFailure(error) }
+        reserved = true
+    }
+    defer { if reserved { unused ReleaseWorkingBytes(options.workers, working) } }
+    result: PixelWriteResult
+    if identity {
+        for y: 0..height - 1 {
+            error = CancellationError(options.cancellation)
+            if error.code != DecodeOK { result.error = error; return result }
+            for x: 0..cast(s64)width * 4 - 1 { output.data[cast(s64)y * output.stride + x] = source.data[cast(s64)y * source.stride + x] }
+            result.output_may_be_modified = true
+        }
+        result.is_ok = true; return result
+    }
+    scratch: Vec(float64)
+    if !VecResizeBounded(scratch, count, count) { return PixelFailure(Error(AllocationFailed)) }
+    scale_x := cast(float64)source.width / cast(float64)width
+    filter_x := ifx scale_x > 1.0 then scale_x else 1.0
+    scale_y := cast(float64)source.height / cast(float64)height
+    filter_y := ifx scale_y > 1.0 then scale_y else 1.0
+    for y: 0..source.height - 1 {
+        error = CancellationError(options.cancellation)
+        if error.code != DecodeOK { return PixelFailure(error) }
+        for x: 0..width - 1 {
+            center := (cast(float64)x + 0.5) * scale_x - 0.5
+            first := PreviewFloor(center - 3.0 * filter_x) + 1
+            last := PreviewFloor(center + 3.0 * filter_x)
+            sums: [4]float64; total: float64 = 0.0
+            for sample: first..last {
+                weight := LanczosWeight((cast(float64)sample - center) / filter_x)
+                sx := ifx sample < 0 then 0 else ifx sample >= source.width then source.width - 1 else sample
+                at := cast(s64)y * source.stride + cast(s64)sx * 4
+                alpha := cast(float64)source.data[at + 3]
+                for channel: 0..2 { sums[channel] += cast(float64)source.data[at + channel] * alpha / 255.0 * weight }
+                sums[3] += alpha * weight; total += weight
+            }
+            at := (cast(s64)y * width + x) * 4
+            for channel: 0..3 { scratch[at + channel] = sums[channel] / total }
+        }
+    }
+    for y: 0..height - 1 {
+        error = CancellationError(options.cancellation)
+        if error.code != DecodeOK { result.error = error; return result }
+        center := (cast(float64)y + 0.5) * scale_y - 0.5
+        first := PreviewFloor(center - 3.0 * filter_y) + 1
+        last := PreviewFloor(center + 3.0 * filter_y)
+        for x: 0..width - 1 {
+            sums: [4]float64; total: float64 = 0.0
+            for sample: first..last {
+                weight := LanczosWeight((cast(float64)sample - center) / filter_y)
+                sy := ifx sample < 0 then 0 else ifx sample >= source.height then source.height - 1 else sample
+                at := (cast(s64)sy * width + x) * 4
+                for channel: 0..3 { sums[channel] += scratch[at + channel] * weight }
+                total += weight
+            }
+            at := cast(s64)y * output.stride + cast(s64)x * 4
+            alpha := sums[3] / total
+            output.data[at + 3] = PreviewByte(alpha)
+            for channel: 0..2 {
+                output.data[at + channel] = ifx alpha <= 0.0 then cast(u8)0 else PreviewByte(sums[channel] / total * 255.0 / alpha)
+            }
+            result.output_may_be_modified = true
+        }
+    }
+    result.is_ok = true
+    return result
+}

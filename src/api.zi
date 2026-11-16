@@ -14,3 +14,12 @@ LibaomOracle :: () -> Av1Engine { return LibaomEngine() }
 Interop :: #import "bridge";
 #import "static"
 StaticNativeAPI :: () -> Interop.AvifAPI { return StaticAPI() }
+using Encoding :: #import "encode"
+using Preview :: #import "preview"
+EncodeRGBA8 :: (source: RgbaView, metadata: EncodeMetadata, options: EncodeOptions) -> EncodeResult {
+    return EncodeRGBA8WithAPI(StaticEncodeAPI(), source, metadata, options)
+}
+StaticNativeEncodeAPI :: () -> AvifEncodeAPI { return StaticEncodeAPI() }
+Reencode :: (input: BorrowedBytes, options: EncodeOptions) -> EncodeResult {
+    return ReencodeWithAPI(StaticAPI(), StaticEncodeAPI(), input, options)
+}

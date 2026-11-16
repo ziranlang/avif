@@ -200,3 +200,49 @@ Cancellation is cooperative at row boundaries. `PixelWriteResult` reports
 `is_ok`, `error` and `output_may_be_modified`, including possible completed
 writes on cancellation. These modules remain internal and do not change the
 default native facade.
+
+## Still-image AVIF encoding
+
+`avif/api` exports `EncodeRGBA8(source: RgbaView, metadata: EncodeMetadata,
+options: EncodeOptions) -> EncodeResult` and `Reencode(input: BorrowedBytes,
+options: EncodeOptions) -> EncodeResult`. Both require the pinned native
+artifact. Headless function-table consumers can import `avif/encode` and call
+`EncodeRGBA8WithAPI` or `ReencodeWithAPI` instead. The separate `AvifEncodeAPI`
+keeps decoder function tables unchanged.
+
+Start with `DefaultEncodeOptions()` (quality 35) and
+`DefaultEncodeMetadata()` (8-bit, one frame, orientation 1). Quality accepts
+1..100. RGBA input is straight alpha at its stored dimensions; encoding never
+resizes it. Color uses full-range identity YUV444; alpha is lossless at every
+quality. ICC, Exif and XMP bytes are copied into the output. Orientation 1..8
+is represented by AVIF rotation/mirror properties, without baking it into pixels.
+Callers must supply metadata describing the actual source pixels. No color
+profile conversion is performed.
+
+Successful results own `bytes: Vec(u8)` and report stored `width` and `height`.
+`bytes.count` is the real encoded length, including metadata. Larger results
+are returned too; callers decide whether to keep the original. Failures return
+`is_ok=false`, an empty byte vector and the shared `DecodeError`.
+
+The encoder rejects high bit depth, multiple frames, unsupported AVIF properties,
+gain maps and HDR transfer functions. `Reencode` retains the native AVIF planes,
+color description, alpha and transforms. Dimensions are capped at 32768 per edge,
+64 Mi pixels, input/output at 256 MiB and metadata at 1 MiB, in addition to tighter
+caller limits. A single worker runs libaom at speed 8. Cancellation is cooperative
+before/after native calls; a native encode call cannot be interrupted. Working-byte
+accounting covers image planes; opaque codec allocations are not a hard RSS limit.
+
+## Lanczos previews
+
+`avif/preview` exports `LanczosRGBA8Into(source: RgbaView, width: s32,
+height: s32, output: OutputBuffer, options: DecodeOptions) -> PixelWriteResult`.
+The caller explicitly chooses dimensions and owns the destination. Source and
+destination must not overlap. Identity sizing copies pixels exactly. Other sizes
+use separable Lanczos-3 with widened downsampling support, clamped borders and
+premultiplied-alpha filtering; output remains straight RGBA8. Transparent colored
+pixels do not bleed into opaque neighbors. No gamma/profile conversion is applied.
+
+The intermediate buffer uses `width * source.height * 32` bytes and obeys working
+limits and worker reservations. Cancellation is checked per row. Errors before
+writing leave the output unchanged; `output_may_be_modified` identifies later
+failures. The preview kernel has no native codec or Kryon dependency.

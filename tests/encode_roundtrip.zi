@@ -1,0 +1,139 @@
+#import "avif/api"
+Native :: #import "avif/bridge"
+#import "std/vec"
+#import "std/byte_text_linux"
+#import "std/file"
+#import "std/text"
+created: s32;
+UnexpectedCreate :: () -> *Native.RawDecoder { created += 1; return null }
+WrongVersion :: () -> *u8 { text := "1.4.2"; return (cast(*TextDescriptor)(*text)).data }
+#program_export
+main :: (argc: s32, argv: **u8) -> s32 {
+    if argc != 2 { return 90 }
+    directory := TextFromCString(argv[1])
+    width: s32 = 128; height: s32 = 96
+    pixels: Vec(u8)
+    unused VecResizeBounded(pixels, cast(s64)width * height * 4, 1000000)
+    for y: 0..height - 1 { for x: 0..width - 1 {
+        at := (cast(s64)y * width + x) * 4
+        pixels[at] = cast(u8)((x * 13 + y * 7) % 256)
+        pixels[at + 1] = cast(u8)((x * 3 + y * 19) % 256)
+        pixels[at + 2] = cast(u8)((x * 31 + y * 11) % 256)
+        pixels[at + 3] = cast(u8)((x * 5 + y * 17) % 256)
+    } }
+    source := RgbaView.{width, height, cast(s64)width * 4, VecSlice(pixels, 0, pixels.count)}
+    metadata := DefaultEncodeMetadata()
+    icc: [128]u8; icc[3] = 128
+    exif: [26]u8 = .[73,73,42,0,8,0,0,0,1,0,18,1,3,0,1,0,0,0,1,0,0,0,0,0,0,0]
+    xmp := "<x:xmpmeta>fixture</x:xmpmeta>"
+    metadata.icc = icc[:]; metadata.exif = exif[:]; metadata.xmp = BytesFromPointer((cast(*TextDescriptor)(*xmp)).data, cast(u64)xmp.count)
+    last_size: s64 = 0
+    qualities: [3]s32 = .[1,35,100]
+    for quality: qualities {
+        options := DefaultEncodeOptions(); options.quality = quality
+        encoded := EncodeRGBA8(source, metadata, options)
+        if !encoded.is_ok { print("encode q% error %\n", quality, encoded.error.code); return 1 }
+        if encoded.width != width || encoded.height != height || encoded.bytes.count <= last_size { return 2 }
+        last_size = encoded.bytes.count
+        api := StaticNativeAPI(); decoder := api.create()
+        if decoder == null { return 3 }
+        decoder.codec = 2; decoder.threads = 1; decoder.ignore_exif = 0; decoder.ignore_xmp = 0
+        if api.memory(decoder, *encoded.bytes[0], cast(usize)last_size) != 0 || api.parse(decoder) != 0 || api.next(decoder) != 0 { return 4 }
+        image := decoder.image
+        if image.width != cast(u32)width || image.height != cast(u32)height || image.depth != 8 || decoder.image_count != 1 || image.alpha == null { return 5 }
+        if TextFromBytes(BytesFromPointer(image.icc.data, cast(u64)image.icc.size)) != TextFromBytes(metadata.icc) ||
+           TextFromBytes(BytesFromPointer(image.exif.data, cast(u64)image.exif.size)) != TextFromBytes(metadata.exif) ||
+           TextFromBytes(BytesFromPointer(image.xmp.data, cast(u64)image.xmp.size)) != xmp { return 6 }
+        decoded: Vec(u8); unused VecResizeBounded(decoded, pixels.count, pixels.count)
+        rgb: Native.RawRGB; api.defaults(*rgb, image); rgb.format = 1; rgb.depth = 8; rgb.premultiplied = 0
+        rgb.pixels = *decoded[0]; rgb.row_bytes = cast(u32)width * 4
+        if api.convert(image, *rgb) != 0 { return 7 }
+        for index: cast(s64)0..cast(s64)width * height - 1 {
+            if decoded[index * 4 + 3] != pixels[index * 4 + 3] { return 8 }
+        }
+        if quality == 100 { for index: cast(s64)0..pixels.count - 1 { if decoded[index] != pixels[index] { return 9 } } }
+        api.destroy(decoder)
+        path: Vec(u8); BuilderPrint(*path, "%/q%.avif", directory, quality)
+        if !WriteEntireFile(BuilderFinish(path), TextFromBytes(VecSlice(encoded.bytes, 0, encoded.bytes.count))) { return 10 }
+        print("q%: % bytes, %x%, exact alpha and metadata\n", quality, encoded.bytes.count, width, height)
+        transcoded := Reencode(BorrowBytes(VecSlice(encoded.bytes, 0, encoded.bytes.count)), options)
+        if !transcoded.is_ok { return 11 }
+    }
+    options := DefaultEncodeOptions(); options.quality = 0
+    invalid1 := EncodeRGBA8(source, metadata, options)
+    if invalid1.is_ok || invalid1.error.code != InvalidInput || invalid1.bytes.count != 0 { return 12 }
+    options.quality = 101; invalid2 := EncodeRGBA8(source, metadata, options)
+    if invalid2.is_ok || invalid2.error.code != InvalidInput { return 13 }
+    options.quality = 35; metadata.source_bit_depth = 10
+    invalid3 := EncodeRGBA8(source, metadata, options)
+    if invalid3.is_ok || invalid3.error.code != UnsupportedCapability { return 14 }
+    metadata.source_bit_depth = 8; metadata.frame_count = 2
+    invalid4 := EncodeRGBA8(source, metadata, options)
+    if invalid4.is_ok || invalid4.error.code != UnsupportedCapability { return 15 }
+    metadata = DefaultEncodeMetadata(); options = DefaultEncodeOptions(); options.quality = 100
+    for orientation: 1..8 {
+        metadata.orientation = cast(s32)orientation
+        exif[18] = cast(u8)orientation; metadata.exif = exif[:]
+        encoded := EncodeRGBA8(source,metadata,options)
+        if !encoded.is_ok { return 16 }
+        decoded := Decode(BorrowBytes(VecSlice(encoded.bytes,0,encoded.bytes.count)),DefaultOptions())
+        if !decoded.is_ok { print("orientation % decode %\n",orientation,decoded.error.code); return 17 }
+        ow := ifx orientation >= 5 then height else width
+        oh := ifx orientation >= 5 then width else height
+        if decoded.image.width != ow || decoded.image.height != oh { return 18 }
+        for y: 0..oh-1 { for x: 0..ow-1 {
+            sx := x; sy := y
+            if orientation == 2 { sx = width-1-x }
+            else if orientation == 3 { sx = width-1-x; sy = height-1-y }
+            else if orientation == 4 { sy = height-1-y }
+            else if orientation == 5 { sx = y; sy = x }
+            else if orientation == 6 { sx = y; sy = height-1-x }
+            else if orientation == 7 { sx = width-1-y; sy = height-1-x }
+            else if orientation == 8 { sx = width-1-y; sy = x }
+            for channel: 0..3 {
+                if decoded.image.pixels[(cast(s64)y*ow+x)*4+channel] != pixels[(cast(s64)sy*width+sx)*4+channel] { return 19 }
+            }
+        } }
+        transcoded := Reencode(BorrowBytes(VecSlice(encoded.bytes,0,encoded.bytes.count)),options)
+        if !transcoded.is_ok || transcoded.width != width || transcoded.height != height { return 27 }
+        repeated := Decode(BorrowBytes(VecSlice(transcoded.bytes,0,transcoded.bytes.count)),DefaultOptions())
+        if !repeated.is_ok || repeated.image.width != ow || repeated.image.height != oh { return 28 }
+        for index: cast(s64)0..decoded.image.pixels.count - 1 {
+            if repeated.image.pixels[index] != decoded.image.pixels[index] { return 29 }
+        }
+    }
+    options = DefaultEncodeOptions(); metadata = DefaultEncodeMetadata()
+    budget := NewWorkerBudget(options.limits); options.workers = *budget
+    encoded := EncodeRGBA8(source,metadata,options)
+    if !encoded.is_ok || budget.active_workers != 0 || budget.working_bytes != 0 { return 20 }
+    options.limits.max_output_bytes = 1
+    invalid5 := EncodeRGBA8(source,metadata,options)
+    if invalid5.is_ok || invalid5.error.code != LimitExceeded || budget.active_workers != 0 || budget.working_bytes != 0 { return 21 }
+    options = DefaultEncodeOptions(); options.workers = *budget; options.limits.max_metadata_bytes = 1
+    metadata.icc = icc[:]
+    invalid6 := EncodeRGBA8(source,metadata,options)
+    if invalid6.is_ok || invalid6.error.code != LimitExceeded || invalid6.bytes.count != 0 || budget.active_workers != 0 || budget.working_bytes != 0 { return 24 }
+    metadata = DefaultEncodeMetadata(); metadata.orientation = 9; options = DefaultEncodeOptions()
+    invalid7 := EncodeRGBA8(source,metadata,options)
+    if invalid7.is_ok || invalid7.error.code != InvalidInput { return 25 }
+    metadata = DefaultEncodeMetadata(); unavailable: AvifEncodeAPI
+    invalid8 := EncodeRGBA8WithAPI(unavailable,source,metadata,options)
+    if invalid8.is_ok || invalid8.error.code != UnsupportedCapability || invalid8.bytes.count != 0 { return 26 }
+    options = DefaultEncodeOptions(); cancellation: Cancellation; cancellation.requested = true; options.cancellation = *cancellation
+    invalid9 := EncodeRGBA8(source,metadata,options)
+    if invalid9.is_ok || invalid9.error.code != DecodeCancelled { return 22 }
+    names: [3]string = .["rgba10","rgba12","animated"]
+    for name: names {
+        path: Vec(u8); BuilderPrint(*path,"tests/fixtures/%.avif",name)
+        fixture := ReadEntireFile(BuilderFinish(path))
+        rejected := Reencode(BorrowBytes(BytesFromPointer((cast(*TextDescriptor)(*fixture)).data,cast(u64)fixture.count)),DefaultEncodeOptions())
+        if rejected.is_ok || rejected.error.code != UnsupportedCapability { return 23 }
+    }
+    fixture := ReadEntireFile("tests/fixtures/rgba8.avif")
+    input := BorrowBytes(BytesFromPointer((cast(*TextDescriptor)(*fixture)).data,cast(u64)fixture.count))
+    wrong := StaticNativeAPI(); wrong.version = WrongVersion; wrong.create = UnexpectedCreate
+    rejected := ReencodeWithAPI(wrong,StaticNativeEncodeAPI(),input,DefaultEncodeOptions())
+    if rejected.is_ok || rejected.error.code != UnsupportedCapability || created != 0 { return 30 }
+    print("Encoding contracts passed\n")
+    return 0
+}

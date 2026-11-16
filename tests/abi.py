@@ -12,10 +12,11 @@ mapping={
 mapping['RawImage'][1].update({'range':'yuvRange','chroma':'yuvChromaSamplePosition','owns_yuv':'imageOwnsYUVPlanes','alpha_row':'alphaRowBytes','owns_alpha':'imageOwnsAlphaPlane','clli':'clli','aspect':'pasp','property_count':'numProperties'})
 mapping['RawRGB'][1].update({'height':'height','upsampling':'chromaUpsampling','downsampling':'chromaDownsampling','ignore_alpha':'ignoreAlpha','float_pixels':'isFloat'})
 mapping['RawDecoder'][1].update({'source':'requestedSource','progressive':'allowProgressive','incremental':'allowIncremental','ignore_exif':'ignoreExif','ignore_xmp':'ignoreXMP','dimension_limit':'imageDimensionLimit','count_limit':'imageCountLimit','duration_timescale':'durationInTimescales'})
+mapping['RawEncoder']=('avifEncoder',{'codec':'codecChoice','threads':'maxThreads','speed':'speed','keyframe_interval':'keyframeInterval','timescale':'timescale','repetitions':'repetitionCount','extra_layers':'extraLayerCount','quality':'quality','alpha_quality':'qualityAlpha'})
 c=['#include <stddef.h>','#include <stdio.h>','#include <avif/avif.h>','int main(void) {']
-z=['#import "avif/bridge"','#program_export','main :: () -> s32 {']
+z=['#import "avif/encode"','#import "avif/bridge"','#program_export','main :: () -> s32 {']
 for number,(zi,(ctype,fields)) in enumerate(mapping.items()):
-    if zi!='RawDecoder':
+    if zi not in ('RawDecoder','RawEncoder'):
         c.append(f'printf("%zu\\n", sizeof({ctype}));')
         z.append(f'print("%\\n", size_of({zi}));')
     z.append(f'v{number}: {zi}')

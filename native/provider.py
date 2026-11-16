@@ -118,7 +118,7 @@ def stage_artifact(out, a, root, build, sources, pins):
     (out/'provenance.json').write_text(json.dumps({'schema': 2, 'platform': a.platform,
         'sources': pins, 'versions': VERSIONS, 'threads': THREADS,
         'dav1d': {'asm': True, 'cpu_dispatch': 'runtime', 'merged_into': 'lib/libavif.a'},
-        'encoder': False, 'libyuv': False, 'libsharpyuv': False}, indent=2)+'\n')
+        'encoder': {'codec': 'libaom', 'threads': 1, 'speed': 8, 'alpha_quality': 100}, 'libyuv': False, 'libsharpyuv': False}, indent=2)+'\n')
     (out/'link.txt').write_text('archive\tlib/libavif.a\narchive\tlib/libaom.a\n'
                                 'library\t-lpthread\nlibrary\t-ldl\nlibrary\t-lm\n')
 

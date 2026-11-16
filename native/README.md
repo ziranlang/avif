@@ -27,7 +27,7 @@ through the toolchain consumer, links the archives and executes the result.
 
 The artifact CLI accepts only `linux-x86_64-gnu`; other platforms fail
 explicitly and are built through the CMake function below. Every build is
-decode-only, with no libyuv/libsharpyuv and no encoders/apps/examples/tests.
+decode and still-image encode capable, with no libyuv/libsharpyuv and no apps/examples/tests.
 libaom is single-threaded (`CONFIG_MULTITHREAD=0`). dav1d is built by Meson
 with `enable_asm=true`, release DSP trimming and its normal runtime CPU
 dispatch. The bridge requests a bounded thread count (see docs/API.md).

@@ -49,13 +49,14 @@ ziran_avif_add_native(AVIF_SOURCE "${AVIF_SOURCE}" AOM_SOURCE "${AOM_SOURCE}" DA
 add_executable(native_consumer "${AVIF_PACKAGE}/tests/native_consumer.c")
 target_link_libraries(native_consumer PRIVATE ziran_avif::static)
 ''')
-    build = OUT/'consumer-build'
+    # Native output may need a local filesystem when sources are shared.
+    build = Path(os.environ.get('AVIF_CONSUMER_BUILD', OUT/'consumer-build'))
     run(['cmake','-S',project,'-B',build,'-DCMAKE_BUILD_TYPE=Release',f'-DAVIF_PACKAGE={ROOT}',
          f'-DAVIF_SOURCE={paths["libavif"]}',f'-DAOM_SOURCE={paths["libaom"]}',
          f'-DDAV1D_SOURCE={paths["dav1d"]}','-DZIRAN_AVIF_DAV1D_JOBS=1'],'consumer-configure')
     cache = (build/'CMakeCache.txt').read_text().splitlines()
-    for setting in ('CONFIG_AV1_ENCODER:BOOL=0','CONFIG_AV1_DECODER:BOOL=1','CONFIG_MULTITHREAD:BOOL=0',
-                    'AVIF_CODEC_AOM_ENCODE:BOOL=OFF','AVIF_CODEC_AOM_DECODE:BOOL=ON',
+    for setting in ('CONFIG_AV1_ENCODER:BOOL=1','CONFIG_AV1_DECODER:BOOL=1','CONFIG_MULTITHREAD:BOOL=0',
+                    'AVIF_CODEC_AOM_ENCODE:BOOL=ON','AVIF_CODEC_AOM_DECODE:BOOL=ON',
                     'AVIF_CODEC_DAV1D:STRING=SYSTEM','AVIF_LIBYUV:STRING=OFF'):
         assert setting in cache, setting
     run(['cmake','--build',build,'--target','native_consumer','--parallel','1'],'consumer-build')

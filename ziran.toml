@@ -5,13 +5,15 @@ entry = "tools/avif.zi"
 
 [toolchain]
 git = "https://github.com/ziranlang/ziran.git"
-ref = "5fe70de6960b2fb8f01164c6643687adfba94156"
+ref = "e813c847376f09dbf3400d0f37cec0a81822f7d1"
 
 [exports]
 api = "src/api.zi"
 engine = "src/engine.zi"
 bmff = "src/bmff.zi"
 bridge = "src/bridge.zi"
+encode = "src/encode.zi"
+preview = "src/preview.zi"
 
 [tool]
 project = "build/bin/avif-native"

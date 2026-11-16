@@ -28,9 +28,9 @@ int main(int argc, char **argv)
 {
     if (argc != 3 || strcmp(avifVersion(), "1.3.0") ||
         !avifCodecName(AVIF_CODEC_CHOICE_AOM, AVIF_CODEC_FLAG_CAN_DECODE) ||
-        avifCodecName(AVIF_CODEC_CHOICE_AOM, AVIF_CODEC_FLAG_CAN_ENCODE) ||
+        !avifCodecName(AVIF_CODEC_CHOICE_AOM, AVIF_CODEC_FLAG_CAN_ENCODE) ||
         !avifCodecName(AVIF_CODEC_CHOICE_DAV1D, AVIF_CODEC_FLAG_CAN_DECODE) ||
-        avifCodecName(AVIF_CODEC_CHOICE_AUTO, AVIF_CODEC_FLAG_CAN_ENCODE)) return 1;
+        !avifCodecName(AVIF_CODEC_CHOICE_AUTO, AVIF_CODEC_FLAG_CAN_ENCODE)) return 1;
     unsigned char input[4096], expected[4096];
     FILE *source = fopen(argv[1], "rb"), *golden = fopen(argv[2], "rb");
     if (!source || !golden) return 2;
@@ -43,6 +43,6 @@ int main(int argc, char **argv)
     if (!status) status = decode(AVIF_CODEC_CHOICE_DAV1D, 1, input, size, expected, count);
     if (!status) status = decode(AVIF_CODEC_CHOICE_DAV1D, 8, input, size, expected, count);
     if (status) return status;
-    puts("Reusable static CMake target: pinned decoder-only libavif with libaom oracle and dav1d default exact golden passed");
+    puts("Reusable static CMake target: pinned encoder+decoder libavif with libaom oracle and dav1d default exact golden passed");
     return 0;
 }

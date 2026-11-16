@@ -52,8 +52,8 @@
     "name": "avif"
   },
   "toolchain": {
-    "commit": "5fe70de6960b2fb8f01164c6643687adfba94156",
-    "ref": "5fe70de6960b2fb8f01164c6643687adfba94156",
+    "commit": "e813c847376f09dbf3400d0f37cec0a81822f7d1",
+    "ref": "e813c847376f09dbf3400d0f37cec0a81822f7d1",
     "url": "https://github.com/ziranlang/ziran.git"
   }
 }

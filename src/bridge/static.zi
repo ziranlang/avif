@@ -20,3 +20,27 @@ WrapConvert :: (image: *RawImage, rgb: *RawRGB) -> s32 { return Convert(image, r
 WrapCrop :: (crop: *RawCrop, aperture: *u32, width: u32, height: u32, format: s32, diagnostics: *void) -> s32 { return Crop(crop, aperture, width, height, format, diagnostics) }
 WrapVersion :: () -> *u8 { return Version() }
 StaticAPI :: () -> AvifAPI { return AvifAPI.{WrapVersion, WrapCreate, WrapDestroy, WrapMemory, WrapParse, WrapNext, WrapDefaults, WrapConvert, WrapCrop} }
+using Encoding :: #import "encode"
+ImageCreate :: (width: u32, height: u32, depth: u32, format: s32) -> *RawImage #foreign avif_native "avifImageCreate";
+ImageDestroy :: (image: *RawImage) #foreign avif_native "avifImageDestroy";
+FromRGB :: (image: *RawImage, rgb: *RawRGB) -> s32 #foreign avif_native "avifImageRGBToYUV";
+SetICC :: (image: *RawImage, data: *u8, count: usize) -> s32 #foreign avif_native "avifImageSetProfileICC";
+SetExif :: (image: *RawImage, data: *u8, count: usize) -> s32 #foreign avif_native "avifImageSetMetadataExif";
+SetXMP :: (image: *RawImage, data: *u8, count: usize) -> s32 #foreign avif_native "avifImageSetMetadataXMP";
+EncoderCreate :: () -> *RawEncoder #foreign avif_native "avifEncoderCreate";
+EncoderDestroy :: (encoder: *RawEncoder) #foreign avif_native "avifEncoderDestroy";
+EncoderWrite :: (encoder: *RawEncoder, image: *RawImage, output: *RawBytes) -> s32 #foreign avif_native "avifEncoderWrite";
+DataFree :: (data: *RawBytes) #foreign avif_native "avifRWDataFree";
+WrapImageCreate :: (width: u32, height: u32, depth: u32, format: s32) -> *RawImage { return ImageCreate(width, height, depth, format) }
+WrapImageDestroy :: (image: *RawImage) { ImageDestroy(image) }
+WrapFromRGB :: (image: *RawImage, rgb: *RawRGB) -> s32 { return FromRGB(image, rgb) }
+WrapICC :: (image: *RawImage, data: *u8, count: usize) -> s32 { return SetICC(image, data, count) }
+WrapExif :: (image: *RawImage, data: *u8, count: usize) -> s32 { return SetExif(image, data, count) }
+WrapXMP :: (image: *RawImage, data: *u8, count: usize) -> s32 { return SetXMP(image, data, count) }
+WrapEncoderCreate :: () -> *RawEncoder { return EncoderCreate() }
+WrapEncoderDestroy :: (encoder: *RawEncoder) { EncoderDestroy(encoder) }
+WrapEncoderWrite :: (encoder: *RawEncoder, image: *RawImage, output: *RawBytes) -> s32 { return EncoderWrite(encoder, image, output) }
+WrapDataFree :: (data: *RawBytes) { DataFree(data) }
+StaticEncodeAPI :: () -> AvifEncodeAPI {
+    return AvifEncodeAPI.{WrapVersion, WrapImageCreate, WrapImageDestroy, WrapDefaults, WrapFromRGB, WrapICC, WrapExif, WrapXMP, WrapEncoderCreate, WrapEncoderDestroy, WrapEncoderWrite, WrapDataFree}
+}
