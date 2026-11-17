@@ -50,7 +50,7 @@ flags (a cross file when cross-compiling, mapped to its CPU family), built
 into `dav1d-install` and merged into `libavif.a`, so consumers link the same
 two archives as before. `ZIRAN_AVIF_DAV1D_JOBS` bounds its Ninja jobs (4).
 `BUILD_SHARED_BRIDGE` additionally creates the real `avif_bridge` target on
-Linux. `SHARED_TARGET_NAME kryonavif` preserves a consumer's existing build
+Linux and Android. Android shared objects use 16 KB load-segment alignment. `SHARED_TARGET_NAME kryonavif` preserves a consumer's existing build
 target and binary name; `SHARED_OUTPUT_NAME` optionally changes only the
 binary name. There is no second codec recipe in the consuming project.
 
@@ -109,3 +109,11 @@ build-queue -- make native-tools
 No global Python environment or system packages are changed. Native artifacts
 contain upstream C/assembly engine code; handwritten package product source is
 Ziran. Recipe/build/test orchestration uses Python, shell, CMake and Make.
+
+`build-queue -- python3 tests/android_shared.py --serial ZE2223BQZT` builds
+ARMv7 and AArch64 shared bridges with the NDK. Source and saved-IR consumers
+link only libc/dl/m, load the bridge with `dlopen`, and execute all 17 exact
+RGBA/transform/error/ABI cases on the USB Moto's supported ARMv7 ABI. The
+AArch64 objects are cross-linked and their ELF headers validated. Omit
+`--serial` for cross-build validation only. This uses the same `dynamic.zi`
+consumer as the package's Linux suite, without another codec implementation.

@@ -14,3 +14,7 @@ build/bin/avif-native: native/provider.py Makefile build/native-tools/.requireme
 	mv -f "$$stage" $@
 test:
 	build-queue -- sh tests/avif.sh
+
+.PHONY: android-shared-test
+android-shared-test:
+	build-queue -- python3 tests/android_shared.py $(if $(ANDROID_SERIAL),--serial "$(ANDROID_SERIAL)")
