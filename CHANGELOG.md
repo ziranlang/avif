@@ -2,7 +2,7 @@
 
 ## [Unreleased]
 
-- The native bridge converts 8-bit pictures (4:2:0, 4:2:2, 4:4:4; BT.601, BT.709, BT.2020; full or limited range) to RGBA itself: libavif's centred bilinear chroma in fixed point, split across the cores, within one level of the reference. Built without libyuv, libavif's float path was most of a phone's decode.
+- The native bridge converts 8-bit 4:2:0 and 4:2:2 pictures (BT.601, BT.709, BT.2020, FCC and SMPTE 240; full or limited range) to RGBA itself, split across the cores. It repeats libavif's float arithmetic for centred bilinear chroma in the same order, so every byte matches libavif and the reference decoder's digests. Built without libyuv, libavif's generic loop was most of a phone's decode. 4:4:4 keeps libavif's own fast path.
 - Add bounded still-image AVIF encoding with quality 35 by default, lossless alpha, metadata and orientation preservation, and explicit Lanczos RGBA previews.
 - Native artifact project tools prepare pinned Meson and Ninja on fresh consumers.
 - Headless AVIF APIs and command, bounded container policy and pinned native libavif/libaom artifacts with verification fixtures.
