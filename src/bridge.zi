@@ -2,6 +2,7 @@ using Engine :: #import "engine"
 #import "bmff"
 #import "transform"
 #import "std/byte_text_linux"
+#import "fast_rgba"
 
 // Pinned libavif 1.3.0 public ABI, allocated/destroyed only by libavif.
 RawBytes :: struct { data: *u8; size: usize; }
@@ -218,7 +219,13 @@ BridgeInternal :: (api: AvifAPI, input: BorrowedBytes, options: *DecodeOptions, 
         if !VecResizeBounded(scratch, count, count) { return DecodeFailure(Error(AllocationFailed)) }
         rgb.row_bytes = image.width * 4; rgb.pixels = *scratch[0]
     }
-    error = NativeError(api.convert(image, *rgb))
+    // 8-bit pictures convert here, much faster than libavif without libyuv.
+    fast := image.depth == 8 && image.premultiplied == 0 &&
+        FastRGBA8(image.planes[0], cast(s64)image.rows[0], image.planes[1], cast(s64)image.rows[1],
+            image.planes[2], cast(s64)image.rows[2], image.alpha, cast(s64)image.alpha_row,
+            cast(s32)image.width, cast(s32)image.height, image.format, cast(s32)image.matrix,
+            image.range == 1, rgb.pixels, cast(s64)rgb.row_bytes)
+    if !fast { error = NativeError(api.convert(image, *rgb)) }
     if error.code != DecodeOK { return DecodeFailure(error) }
     error = CancellationError(options.cancellation)
     if error.code != DecodeOK { return DecodeFailure(error) }

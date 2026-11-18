@@ -66,6 +66,7 @@ sh tests/container.sh
 sh tests/dynamic.sh
 sh tests/native_recipe.sh
 sh tests/transforms_color.sh
+sh tests/fast_rgba.sh
 sh tests/encode.sh
 sh tests/preview.sh
 # Authored AV1 decode of every fixture item through the container parser,

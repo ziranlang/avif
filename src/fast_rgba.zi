@@ -1,0 +1,122 @@
+// Fast 8-bit YUV to straight RGBA8 for the native decoder. Built without
+// libyuv, libavif converts subsampled chroma with a float loop per pixel,
+// most of a phone's AVIF decode. This keeps libavif's matrix coefficients
+// and its centred bilinear chroma (9/16, 3/16, 3/16, 1/16 of the nearest
+// four samples, as in color.zi) in 16-bit fixed point, and splits the rows
+// across the cores. Anything else returns false for libavif to convert.
+
+FAST_RGBA_MAX_CHROMA :: 4096
+FAST_RGBA_SHIFT :: 16
+
+FastRGBAPlanes :: struct {
+    y: *u8; u: *u8; v: *u8; alpha: *u8
+    y_row: s64; u_row: s64; v_row: s64; alpha_row: s64
+    width: s32; chroma_width: s32; chroma_height: s32
+    shift_x: s32; shift_y: s32
+    // Fixed point: luma (y - bias) * scale; chroma per 1/16 step from 128.
+    bias: s32; scale: s32
+    red_v: s32; green_u: s32; green_v: s32; blue_u: s32
+    output: *u8; output_row: s64
+}
+
+#if #defined(POSIX_THREADS) {
+    FastWorkers :: #import "std/parallel_linux";
+}
+
+// Straight RGBA8 from 8-bit planes. MATRIX is the image's CICP matrix,
+// FORMAT libavif's pixel format (1 444, 2 422, 3 420) and FULL its range.
+FastRGBA8 :: (y: *u8, y_row: s64, u: *u8, u_row: s64, v: *u8, v_row: s64,
+    alpha: *u8, alpha_row: s64, width: s32, height: s32, format: s32, matrix: s32,
+    full: bool, output: *u8, output_row: s64) -> bool {
+    if y == null || u == null || v == null || output == null || width <= 0 || height <= 0 { return false }
+    kr := 0.299; kb := 0.114
+    if matrix == 1 { kr = 0.2126; kb = 0.0722 }
+    else if matrix == 9 { kr = 0.2627; kb = 0.0593 }
+    else if matrix != 2 && matrix != 5 && matrix != 6 { return false }
+    planes: FastRGBAPlanes
+    planes.shift_x = ifx format == 1 then 0 else 1
+    planes.shift_y = ifx format == 3 then 1 else 0
+    if format < 1 || format > 3 { return false }
+    planes.chroma_width = (width + planes.shift_x) >> planes.shift_x
+    planes.chroma_height = (height + planes.shift_y) >> planes.shift_y
+    if planes.chroma_width > FAST_RGBA_MAX_CHROMA { return false }
+    planes.y = y; planes.u = u; planes.v = v; planes.alpha = alpha
+    planes.y_row = y_row; planes.u_row = u_row; planes.v_row = v_row; planes.alpha_row = alpha_row
+    planes.width = width; planes.output = output; planes.output_row = output_row
+    // Output units are 0..255, so 255 / span maps a sample step onto them.
+    one := cast(float64)(1 << FAST_RGBA_SHIFT)
+    span_y := ifx full then 255.0 else 219.0
+    span_c := ifx full then 255.0 else 224.0
+    planes.bias = ifx full then 0 else 16
+    planes.scale = cast(s32)(255.0 / span_y * one + 0.5)
+    chroma := 255.0 / span_c / 16.0 * one
+    kg := 1.0 - kr - kb
+    planes.red_v = cast(s32)(2.0 * (1.0 - kr) * chroma + 0.5)
+    planes.blue_u = cast(s32)(2.0 * (1.0 - kb) * chroma + 0.5)
+    planes.green_u = cast(s32)(2.0 * kb * (1.0 - kb) / kg * chroma + 0.5)
+    planes.green_v = cast(s32)(2.0 * kr * (1.0 - kr) / kg * chroma + 0.5)
+    #if #defined(POSIX_THREADS) {
+        // A pool per image: decodes on different threads never share one.
+        if cast(s64)width * height >= 65536 {
+            workers: FastWorkers.ParallelPool
+            callback: FastWorkers.RangeProcedure = FastRGBARows
+            FastWorkers.ParallelRun(*workers, 0, cast(s64)height, callback, cast(*void)*planes)
+            FastWorkers.ParallelClose(*workers)
+            return true
+        }
+    }
+    FastRGBARows(0, cast(s64)height, cast(*void)*planes)
+    return true
+}
+
+FastRGBAByte :: (value: s32) -> u8 {
+    rounded := (value + (1 << (FAST_RGBA_SHIFT - 1))) >> FAST_RGBA_SHIFT
+    return ifx rounded < 0 then cast(u8)0 else ifx rounded > 255 then cast(u8)255 else cast(u8)rounded
+}
+
+// Rows [START, END). Each row blends its two chroma rows once (3:1), then
+// each chroma column gives its two pixels their own 3:1 horizontal blend.
+FastRGBARows :: (start: s64, end: s64, argument: *void) {
+    p := cast(*FastRGBAPlanes)argument
+    blend_u: [FAST_RGBA_MAX_CHROMA]s32
+    blend_v: [FAST_RGBA_MAX_CHROMA]s32
+    last_x := p.chroma_width - 1
+    for row: start..end-1 {
+        cy := cast(s32)row >> p.shift_y
+        near := cy
+        if p.shift_y != 0 {
+            if (row & 1) != 0 { if cy + 1 < p.chroma_height { near = cy + 1 } }
+            else if cy > 0 { near = cy - 1 }
+        }
+        // Vertical blend in quarters: 3 x the own row + 1 x the nearest one.
+        u0 := cast(s64)cy * p.u_row; u1 := cast(s64)near * p.u_row
+        v0 := cast(s64)cy * p.v_row; v1 := cast(s64)near * p.v_row
+        for cx: cast(s32)0..last_x {
+            blend_u[cx] = 3 * cast(s32)p.u[u0 + cx] + cast(s32)p.u[u1 + cx]
+            blend_v[cx] = 3 * cast(s32)p.v[v0 + cx] + cast(s32)p.v[v1 + cx]
+        }
+        luma := row * p.y_row
+        alpha := row * p.alpha_row
+        out := row * p.output_row
+        for x: cast(s32)0..p.width-1 {
+            cx := x >> p.shift_x
+            // In sixteenths of a sample: the horizontal 3:1 blend of quarters.
+            cu: s32; cv: s32
+            if p.shift_x == 0 { cu = blend_u[cx] * 4; cv = blend_v[cx] * 4 }
+            else {
+                side := cx
+                if (x & 1) != 0 { if cx < last_x { side = cx + 1 } }
+                else if cx > 0 { side = cx - 1 }
+                cu = 3 * blend_u[cx] + blend_u[side]
+                cv = 3 * blend_v[cx] + blend_v[side]
+            }
+            cu -= 2048; cv -= 2048
+            base := (cast(s32)p.y[luma + x] - p.bias) * p.scale
+            at := out + cast(s64)x * 4
+            p.output[at] = FastRGBAByte(base + p.red_v * cv)
+            p.output[at + 1] = FastRGBAByte(base - p.green_u * cu - p.green_v * cv)
+            p.output[at + 2] = FastRGBAByte(base + p.blue_u * cu)
+            p.output[at + 3] = ifx p.alpha != null then p.alpha[alpha + x] else cast(u8)255
+        }
+    }
+}
