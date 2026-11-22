@@ -38,7 +38,7 @@ ref = "3017f0d1cc56975aa29c600a1f55a62e1193cf7b"
 
 [dependencies.av1]
 git = "https://git.waozi.xyz/ziranlang/av1.git"
-ref = "bd278217e2bac754d868b3d6502eac4257658d4b"
+ref = "bed54d12dc5a8cf8e6a514b2a49d3592d6cecb65"
 
 [dependencies.dav1d]
 git = "https://github.com/videolan/dav1d.git"
