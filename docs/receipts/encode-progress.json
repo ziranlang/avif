@@ -1,0 +1,110 @@
+{
+  "status": "Implemented and locally validated with canonical development compiler; locked consumer validation blocked upstream",
+  "task": "codex-avif-avif-encode-lanczos-preview-3",
+  "date": "2026-11-10",
+  "base_revision": "f84c162594e518cb306bfd0ce41783ad55b6c730",
+  "source_sha256": {
+    "src/api.zi": "92851e72b05a3c38a0797e9a5ce75fa5e762bc4d63d2906e99f9204096b602dc",
+    "src/encode.zi": "59c1072c158404474718ae7e4614ee441775726439f05ed946afa273c1ca4dd3",
+    "src/preview.zi": "7651d1930218ca95a7e23e939bddbc9c0e936b8ee56de81161320e574093a9f4",
+    "src/bridge/static.zi": "2561cd66808529101d08547cad374ac6ebb737da7dc6ad13384fc7c1b108d4ff",
+    "native/provider.py": "38a0fa1f6f79047eac3606e4af3aa3da794b4ba946635942d8265e348a9d74c4",
+    "native/ZiranAvif.cmake": "83c63659b14a215137579738c025a67b811644bd2e5db7ecc84ff4124615132d",
+    "tests/encode.sh": "e8b575ac0f3d86bd7444de5a151f5e1d300390e7fd9d4aade3ef468bd68571ba",
+    "tests/encode_roundtrip.zi": "1fed0e9c2106de7303e9604f2dec78f641724d9fc190c8ad7ed53dda66436cf0",
+    "tests/preview.sh": "8276a884c34a900c60bc97a3eb304e4f6022a93c2a3020dbc835523737bf3de8",
+    "tests/preview_contract.zi": "6fadee5d303ab3ada90e2f7bfa586a12207f5138dbb19bc117bb5d99ee452f82",
+    "tests/preview_portable.zi": "fdc9277b98b54762367dbe9777ce4deff991374cdcd57a26a5a656f68d15b843",
+    "tests/preview_reference.py": "36c29e2e6b811d8d178a219e1985da588bc985a31102d5580dae4aa13f3d615a"
+  },
+  "local_tests": [
+    {
+      "command": "build-queue -- sh tests/avif.sh",
+      "receipt": "1797b8f377831cbe044ecd4661893caba3ae",
+      "status": "finished",
+      "exit": 0,
+      "scope": "Canonical development compiler: full suite including encoder, Lanczos, native recipe, source/saved Go/C/directVM and ASan/UBSan"
+    },
+    {
+      "command": "build-queue -- sh tests/bmff.sh",
+      "receipt": "97203e37267966fdf9e0dc8affadfc899d94",
+      "status": "finished",
+      "exit": 0,
+      "scope": "Standalone BMFF suite"
+    },
+    {
+      "command": "build-queue -- make image-preview-test",
+      "receipt": "54c9225f5888ce54049dd096123744e0bedd",
+      "status": "finished",
+      "exit": 0,
+      "scope": "Kryon: JPEG and Exif plus AVIF bytes/alpha/orientation/admission/ownership, source/saved C"
+    },
+    {
+      "command": "build-queue -- ziran check --project --locked --offline src/api.zi",
+      "receipt": "473bbb0147744329689395cc86575fa61c95",
+      "status": "finished",
+      "exit": 0,
+      "scope": "Original pinned toolchain; overrides temporarily moved and restored"
+    },
+    {
+      "command": "build-queue -- sh tests/encode.sh (exact locked toolchain and image_codec)",
+      "receipt": "e1bd8b75b25788edf615829977019385b0c0",
+      "status": "finished",
+      "exit": 1,
+      "scope": "Pinned compiler rejects imported record fields bytes/pixels; preview did not run"
+    }
+  ],
+  "encoder_results": {
+    "qualities": [
+      1,
+      35,
+      100
+    ],
+    "encoded_bytes": [
+      8542,
+      14252,
+      30057
+    ],
+    "stored_dimensions": [
+      128,
+      96
+    ],
+    "alpha": "Exact at every tested quality",
+    "quality100_pixels": "Exact RGBA",
+    "metadata": "ICC/Exif/XMP retained",
+    "orientation": "All eight values including Reencode",
+    "rejections": "Quality bounds, high depth, multiple frames, cancellation, limits and unavailable API"
+  },
+  "preview_results": {
+    "oracle": "Independent 2D Lanczos-3: downscale/upscale within one byte",
+    "targets": "Native source/saved C and source/saved portable bundles on direct VM",
+    "alpha": "Premultiplied filtering; straight RGBA output"
+  },
+  "blocker": {
+    "project": "ziranlang/ziran",
+    "file": "cmd/zir/zir_check_value.c",
+    "function": "compound_type_at_use",
+    "required_behavior": "Accept equal nominal generic applications across reexported record fields",
+    "evidence": "Required same_type_application condition is present in uncommitted compiler diff, absent from HEAD",
+    "next_step": "Compiler owner validates and commits general fix; update exact toolchain pin and rerun locked consumer/package tests"
+  },
+  "dependency_state": "Original manifest toolchain pin and committed lock restored; local overrides restored; trial pin not retained",
+  "remaining": [
+    "Committed compiler fix and reproducible toolchain pin",
+    "Successful locked encode/preview consumer and package validation",
+    "Coherent AVIF commit and push",
+    "Parent/media task owns downstream app UI/account workflow"
+  ],
+  "known_limits": [
+    "8-bit still images only",
+    "No profile/gamma conversion",
+    "Cancellation before/after native calls; opaque codec allocations are not an RSS bound",
+    "Changed Android encoder execution and Windows/macOS unverified by this worker"
+  ],
+  "pending_operations": {},
+  "committed": false,
+  "pushed": false,
+  "released": false,
+  "installed": false,
+  "github_ci": "No checks have run for these uncommitted changes"
+}

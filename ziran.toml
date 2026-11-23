@@ -22,6 +22,14 @@ project = "build/bin/avif-native"
 inputs = ["Makefile", "native/provider.py", "native/CMakeLists.txt", "native/ZiranAvif.cmake", "native/requirements.txt"]
 outputs = ["lib/libavif_bridge.so", "lib/libavif.a", "lib/libaom.a", "resources/LICENSE-libavif", "resources/LICENSE-libaom", "resources/PATENTS-libaom", "resources/LICENSE-dav1d", "provenance.json", "link.txt"]
 
+[tool.android.native]
+cmake = "native/Android.cmake"
+
+[tool.android.native.modules]
+"src/bridge/static.zi" = ["libavif", "dav1d"]
+"src/bridge/static_encode.zi" = ["libavif", "dav1d", "libaom"]
+"src/bridge/libaom.zi" = ["libavif", "dav1d", "libaom"]
+
 [dependencies.libavif]
 git = "https://github.com/AOMediaCodec/libavif.git"
 ref = "1aadfad932c98c069a1204261b1856f81f3bc199"

@@ -13,6 +13,7 @@ LibaomOracle :: () -> Av1Engine { return LibaomEngine() }
 // avif/bridge alone and supply its function table.
 Interop :: #import "bridge";
 #import "static"
+#import "static_encode"
 StaticNativeAPI :: () -> Interop.AvifAPI { return StaticAPI() }
 using Encoding :: #import "encode"
 using Preview :: #import "preview"

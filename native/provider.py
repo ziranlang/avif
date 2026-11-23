@@ -11,10 +11,8 @@ import shutil
 import subprocess
 import sys
 import tempfile
+import tomllib
 
-PINS = {'libavif': '1aadfad932c98c069a1204261b1856f81f3bc199',
-        'libaom': 'b141d9c45db236335351c8a4b2a14b3ade27c937',
-        'dav1d': '54706fc6bc0cdecab7e9593974a4039cc038fca7'}
 VERSIONS = {'libavif': '1.3.0', 'libaom': '3.15.3', 'dav1d': '1.5.4'}
 # Matches avif/bridge AUTO_THREADS, THREADED_MIN_PIXELS(_420) and avif/engine
 # MAX_DECODE_THREADS (the explicit-request bound).
@@ -52,7 +50,9 @@ def main():
         build_artifact(a, root, tool)
 
 def build_artifact(a, root, tool):
-    pins = dict(PINS)
+    with (root / 'ziran.toml').open('rb') as manifest:
+        dependencies = tomllib.load(manifest)['dependencies']
+    pins = {name: dependencies[name]['ref'] for name in VERSIONS}
     sources = {}
     for name, expected in pins.items():
         path = Path(subprocess.check_output([tool, 'pkg', 'path', name], cwd=root, text=True).strip())
