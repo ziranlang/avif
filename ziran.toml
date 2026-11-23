@@ -4,8 +4,8 @@ module_roots = ["src", "src/bridge"]
 entry = "tools/avif.zi"
 
 [toolchain]
-git = "https://github.com/ziranlang/ziran.git"
-ref = "e813c847376f09dbf3400d0f37cec0a81822f7d1"
+git = "https://git.waozi.xyz/ziranlang/ziran.git"
+ref = "5db3d3c39425d5dfe4bfe4a84e6f6e2e5a810ad0"
 
 [exports]
 api = "src/api.zi"
@@ -41,12 +41,12 @@ ref = "b141d9c45db236335351c8a4b2a14b3ade27c937"
 source = true
 
 [dependencies.image_codec]
-git = "https://github.com/ziranlang/image-codec.git"
-ref = "360553150917f352e49e1beb78917370792ccaef"
+git = "https://git.waozi.xyz/ziranlang/image-codec.git"
+ref = "3017f0d1cc56975aa29c600a1f55a62e1193cf7b"
 
 [dependencies.av1]
-git = "https://github.com/ziranlang/av1.git"
-ref = "bd278217e2bac754d868b3d6502eac4257658d4b"
+git = "https://git.waozi.xyz/ziranlang/av1.git"
+ref = "bed54d12dc5a8cf8e6a514b2a49d3592d6cecb65"
 
 [dependencies.dav1d]
 git = "https://github.com/videolan/dav1d.git"
