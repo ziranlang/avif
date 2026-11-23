@@ -13,8 +13,8 @@ build/bin/avif-native: native/provider.py Makefile build/native-tools/.requireme
 	install -m 755 native/provider.py "$$stage"; \
 	mv -f "$$stage" $@
 test:
-	build-queue -- sh tests/avif.sh
+	sh tests/avif.sh
 
 .PHONY: android-shared-test
 android-shared-test:
-	build-queue -- python3 tests/android_shared.py $(if $(ANDROID_SERIAL),--serial "$(ANDROID_SERIAL)")
+	python3 tests/android_shared.py $(if $(ANDROID_SERIAL),--serial "$(ANDROID_SERIAL)")

@@ -20,8 +20,8 @@ canonical checkout overrides belong in ignored `ziran.local.toml`. Production lo
 Run the package suite in this checkout:
 
 ```sh
-build-queue -- sh tests/avif.sh
-build-queue -- sh tests/bmff.sh
+sh tests/avif.sh
+sh tests/bmff.sh
 ```
 
 The test harness uses the canonical sibling Ziran checkout when available;
